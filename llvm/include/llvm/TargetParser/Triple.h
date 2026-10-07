@@ -82,6 +82,7 @@ public:
     sparc,       // Sparc: sparc
     sparcv9,     // Sparcv9: Sparcv9
     sparcel,     // Sparc: (endianness = little). NB: 'Sparcle' is a CPU variant
+    squall,      // Squall (UCSB ArchLAB)
     systemz,     // SystemZ: s390x
     // OpenASIP (http://openasip.org) / big endian 32b targets: tce
     tce,
@@ -177,6 +178,9 @@ public:
     SPIRVSubArch_v14,
     SPIRVSubArch_v15,
     SPIRVSubArch_v16,
+
+    // Squall sub-arch corresponds to its version
+    SquallSubArch_v2,
 
     // DXIL sub-arch corresponds to its version.
     DXILSubArch_v1_0,

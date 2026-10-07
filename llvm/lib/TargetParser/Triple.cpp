@@ -138,6 +138,8 @@ StringRef Triple::getArchTypeName(ArchType Kind) {
     return "spirv32";
   case spirv64:
     return "spirv64";
+  case squall:
+    return "squall";
   case systemz:
     return "s390x";
   case tce:
@@ -215,6 +217,14 @@ StringRef Triple::getArchName(ArchType Kind, SubArchType SubArch) {
       return "spirv1.5";
     case Triple::SPIRVSubArch_v16:
       return "spirv1.6";
+    default:
+      break;
+    }
+    break;
+  case Triple::squall:
+    switch (SubArch) {
+    case Triple::SquallSubArch_v2:
+      return "squallv2";
     default:
       break;
     }
@@ -351,6 +361,9 @@ StringRef Triple::getArchTypePrefix(ArchType Kind) {
   case sparcel:
   case sparc:
     return "sparc";
+
+  case squall:
+    return "sqaull";
 
   case systemz:
     return "s390";
@@ -532,6 +545,7 @@ Triple::ArchType Triple::getArchTypeForLLVMName(StringRef Name) {
       .Case("sparc", sparc)
       .Case("sparcel", sparcel)
       .Case("sparcv9", sparcv9)
+      .Case("squall", squall)
       .Case("s390x", systemz)
       .Case("systemz", systemz)
       .Case("tce", tce)
@@ -686,6 +700,7 @@ Triple::ArchType Triple::parseArch(StringRef ArchName) {
           .Case("sparc", Triple::sparc)
           .Case("sparcel", Triple::sparcel)
           .Cases({"sparcv9", "sparc64"}, Triple::sparcv9)
+          .Case("squall", Triple::squall)
           .Case("tce", Triple::tce)
           .Case("tcele", Triple::tcele)
           .Case("tcele64", Triple::tcele64)
@@ -802,6 +817,11 @@ Triple::SubArchType Triple::parseSubArch(StringRef SubArchName) {
         .EndsWith("v1.4", Triple::SPIRVSubArch_v14)
         .EndsWith("v1.5", Triple::SPIRVSubArch_v15)
         .EndsWith("v1.6", Triple::SPIRVSubArch_v16)
+        .Default(Triple::NoSubArch);
+
+  if (SubArchName.starts_with("squall"))
+    return StringSwitch<Triple::SubArchType>(SubArchName)
+        .EndsWith("v2", Triple::SquallSubArch_v2)
         .Default(Triple::NoSubArch);
 
   if (SubArchName.starts_with("dxil"))
@@ -1039,6 +1059,7 @@ static Triple::ObjectFormatType getDefaultFormat(const Triple &T) {
   case Triple::sparcv9:
   case Triple::spir64:
   case Triple::spir:
+  case Triple::squall:
   case Triple::tce:
   case Triple::tcele:
   case Triple::tcele64:
@@ -1802,6 +1823,7 @@ unsigned Triple::getArchPointerBitWidth(llvm::Triple::ArchType Arch) {
   case llvm::Triple::shave:
   case llvm::Triple::sparc:
   case llvm::Triple::sparcel:
+  case llvm::Triple::squall:
   case llvm::Triple::spir:
   case llvm::Triple::spirv32:
   case llvm::Triple::tce:
@@ -1915,6 +1937,7 @@ Triple Triple::get32BitArchVariant() const {
   case Triple::sparcel:
   case Triple::spir:
   case Triple::spirv32:
+  case Triple::squall:
   case Triple::tce:
   case Triple::tcele:
   case Triple::thumb:
@@ -2004,6 +2027,7 @@ Triple Triple::get64BitArchVariant() const {
   case Triple::r600:
   case Triple::shave:
   case Triple::sparcel:
+  case Triple::squall:
   case Triple::tce:
   case Triple::xcore:
   case Triple::xtensa:

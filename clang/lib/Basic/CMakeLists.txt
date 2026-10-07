@@ -13,20 +13,20 @@ set(version_inc "${CMAKE_CURRENT_BINARY_DIR}/VCSVersion.inc")
 set(generate_vcs_version_script "${LLVM_CMAKE_DIR}/GenerateVersionFromVCS.cmake")
 
 if(llvm_vc AND LLVM_APPEND_VC_REV)
-  set(llvm_source_dir ${LLVM_MAIN_SRC_DIR})
+    set(llvm_source_dir ${LLVM_MAIN_SRC_DIR})
 endif()
 if (LLVM_VC_REPOSITORY AND LLVM_VC_REVISION)
-  set(llvm_source_dir ${LLVM_SOURCE_DIR})
-  set(llvm_vc_repository ${LLVM_VC_REPOSITORY})
-  set(llvm_vc_revision ${LLVM_VC_REVISION})
+    set(llvm_source_dir ${LLVM_SOURCE_DIR})
+    set(llvm_vc_repository ${LLVM_VC_REPOSITORY})
+    set(llvm_vc_revision ${LLVM_VC_REVISION})
 endif()
 if(clang_vc AND LLVM_APPEND_VC_REV)
-  set(clang_source_dir ${CLANG_SOURCE_DIR})
+    set(clang_source_dir ${CLANG_SOURCE_DIR})
 endif()
 if (CLANG_VC_REPOSITORY AND CLANG_VC_REVISION)
-  set(clang_source_dir ${CLANG_SOURCE_DIR})
-  set(clang_vc_repository ${CLANG_VC_REPOSITORY})
-  set(clang_vc_revision ${CLANG_VC_REVISION})
+    set(clang_source_dir ${CLANG_SOURCE_DIR})
+    set(clang_vc_repository ${CLANG_VC_REPOSITORY})
+    set(clang_vc_revision ${CLANG_VC_REVISION})
 endif()
 
 # Create custom target to generate the VC revision include.
@@ -50,7 +50,7 @@ set_source_files_properties("${version_inc}"
              HEADER_FILE_ONLY TRUE)
 
 if(CLANG_VENDOR)
-  set_source_files_properties(Version.cpp
+    set_source_files_properties(Version.cpp
     PROPERTIES COMPILE_DEFINITIONS "CLANG_VENDOR=\"${CLANG_VENDOR} \"")
 endif()
 
@@ -115,6 +115,7 @@ add_clang_library(clangBasic
   Targets/RISCV.cpp
   Targets/SPIR.cpp
   Targets/Sparc.cpp
+  Targets/Squall.cpp
   Targets/SystemZ.cpp
   Targets/TCE.cpp
   Targets/VE.cpp
