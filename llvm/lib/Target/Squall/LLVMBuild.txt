@@ -1,0 +1,8 @@
+[common]
+subdirectories = AsmParser MCTargetDesc TargetInfo
+
+[component_0]
+type = TargetGroup
+name = Squall
+parent = Target
+has_asmparser = 1

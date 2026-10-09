@@ -1,7 +1,7 @@
 # See docs/CMake.html for instructions about how to build LLVM with CMake.
 cmake_minimum_required(VERSION 3.20.0)
 if("${CMAKE_VERSION}" VERSION_LESS "3.31.0")
-  message(WARNING
+    message(WARNING
     "Your CMake version is ${CMAKE_VERSION}. Starting with LLVM 24, the "
     "minimum version of CMake required to build LLVM will become 3.31.0, and "
     "using an older CMake will become an error. Please upgrade your CMake to "
@@ -20,7 +20,7 @@ include(${LLVM_COMMON_CMAKE_UTILS}/Modules/CMakePolicy.cmake
 option(LLVM_NO_INSTALL_NAME_DIR_FOR_BUILD_TREE "If set, use CMake's default build tree install name directory logic (Darwin only)" OFF)
 mark_as_advanced(LLVM_NO_INSTALL_NAME_DIR_FOR_BUILD_TREE)
 if(NOT LLVM_NO_INSTALL_NAME_DIR_FOR_BUILD_TREE)
-  set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR ON)
+    set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR ON)
 endif()
 
 # Darwin used to keep libLLVM's install name unversioned even when
@@ -52,26 +52,26 @@ include(${LLVM_COMMON_CMAKE_UTILS}/Modules/LLVMVersion.cmake)
 set_directory_properties(PROPERTIES LLVM_VERSION_MAJOR "${LLVM_VERSION_MAJOR}")
 
 if (NOT PACKAGE_VERSION)
-  set(PACKAGE_VERSION
+    set(PACKAGE_VERSION
     "${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}${LLVM_VERSION_SUFFIX}")
 endif()
 
 if(NOT DEFINED LLVM_SHLIB_SYMBOL_VERSION)
-  # "Symbol version prefix for libLLVM.so and libclang-cpp.so"
-  set(LLVM_SHLIB_SYMBOL_VERSION "LLVM_${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}")
+    # "Symbol version prefix for libLLVM.so and libclang-cpp.so"
+    set(LLVM_SHLIB_SYMBOL_VERSION "LLVM_${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}")
 endif()
 
 if ((CMAKE_GENERATOR MATCHES "Visual Studio") AND (MSVC_TOOLSET_VERSION LESS 142) AND (CMAKE_GENERATOR_TOOLSET STREQUAL ""))
-  message(WARNING "Visual Studio generators use the x86 host compiler by "
+    message(WARNING "Visual Studio generators use the x86 host compiler by "
                   "default, even for 64-bit targets. This can result in linker "
                   "instability and out of memory errors. To use the 64-bit "
                   "host compiler, pass -Thost=x64 on the CMake command line.")
 endif()
 
 if (CMAKE_GENERATOR STREQUAL "Xcode" AND NOT CMAKE_OSX_ARCHITECTURES)
-  # Some CMake features like object libraries get confused if you don't
-  # explicitly specify an architecture setting with the Xcode generator.
-  set(CMAKE_OSX_ARCHITECTURES "x86_64")
+    # Some CMake features like object libraries get confused if you don't
+    # explicitly specify an architecture setting with the Xcode generator.
+    set(CMAKE_OSX_ARCHITECTURES "x86_64")
 endif()
 
 project(LLVM
@@ -79,8 +79,8 @@ project(LLVM
   LANGUAGES C CXX ASM)
 
 if (NOT DEFINED CMAKE_INSTALL_LIBDIR AND DEFINED LLVM_LIBDIR_SUFFIX)
-  # Must go before `include(GNUInstallDirs)`.
-  set(CMAKE_INSTALL_LIBDIR "lib${LLVM_LIBDIR_SUFFIX}")
+    # Must go before `include(GNUInstallDirs)`.
+    set(CMAKE_INSTALL_LIBDIR "lib${LLVM_LIBDIR_SUFFIX}")
 endif()
 
 # Must go after `DEFINED LLVM_LIBDIR_SUFFIX` check.
@@ -95,14 +95,14 @@ set(LLVM_REQUIRED_CXX_STANDARD 17)
 # If we find that the cache contains CMAKE_CXX_STANDARD it means that it's a old CMakeCache.txt
 # and we can just inform the user and then reset it.
 if($CACHE{CMAKE_CXX_STANDARD} AND $CACHE{CMAKE_CXX_STANDARD} LESS ${LLVM_REQUIRED_CXX_STANDARD})
-  message(WARNING "Resetting cache value for CMAKE_CXX_STANDARD to ${LLVM_REQUIRED_CXX_STANDARD}")
-  unset(CMAKE_CXX_STANDARD CACHE)
+    message(WARNING "Resetting cache value for CMAKE_CXX_STANDARD to ${LLVM_REQUIRED_CXX_STANDARD}")
+    unset(CMAKE_CXX_STANDARD CACHE)
 endif()
 
 # if CMAKE_CXX_STANDARD is still set after the cache unset above it means that the user requested it
 # and we allow it to be set to something newer than the required standard but otherwise we fail.
 if(DEFINED CMAKE_CXX_STANDARD AND CMAKE_CXX_STANDARD LESS ${LLVM_REQUIRED_CXX_STANDARD})
-  message(FATAL_ERROR "Requested CMAKE_CXX_STANDARD=${CMAKE_CXX_STANDARD} which is less than the required ${LLVM_REQUIRED_CXX_STANDARD}.")
+    message(FATAL_ERROR "Requested CMAKE_CXX_STANDARD=${CMAKE_CXX_STANDARD} which is less than the required ${LLVM_REQUIRED_CXX_STANDARD}.")
 endif()
 
 set(CMAKE_CXX_STANDARD ${LLVM_REQUIRED_CXX_STANDARD} CACHE STRING "C++ standard to conform to")
@@ -110,10 +110,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED YES)
 set(CMAKE_CXX_EXTENSIONS NO)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-  message(WARNING "No build type selected. Defaulted CMAKE_BUILD_TYPE=Release.
+    message(WARNING "No build type selected. Defaulted CMAKE_BUILD_TYPE=Release.
 Learn more about the options in our documentation at https://llvm.org/docs/CMake.html#cmake-build-type
 ")
-  set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel" FORCE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel" FORCE)
 endif()
 
 # Set default build type for cmake's try_compile module.
@@ -121,13 +121,13 @@ endif()
 # items from CMAKE_CONFIGURATION_TYPES. Logic below can be further
 # simplified once LLVM's minimum CMake version is updated to 3.17.
 if(CMAKE_DEFAULT_BUILD_TYPE)
-  set(CMAKE_TRY_COMPILE_CONFIGURATION ${CMAKE_DEFAULT_BUILD_TYPE})
+    set(CMAKE_TRY_COMPILE_CONFIGURATION ${CMAKE_DEFAULT_BUILD_TYPE})
 else()
-  if(CMAKE_CONFIGURATION_TYPES)
-    list(GET CMAKE_CONFIGURATION_TYPES 0 CMAKE_TRY_COMPILE_CONFIGURATION)
-  elseif(CMAKE_BUILD_TYPE)
-    set(CMAKE_TRY_COMPILE_CONFIGURATION ${CMAKE_BUILD_TYPE})
-  endif()
+    if(CMAKE_CONFIGURATION_TYPES)
+        list(GET CMAKE_CONFIGURATION_TYPES 0 CMAKE_TRY_COMPILE_CONFIGURATION)
+    elseif(CMAKE_BUILD_TYPE)
+        set(CMAKE_TRY_COMPILE_CONFIGURATION ${CMAKE_BUILD_TYPE})
+    endif()
 endif()
 
 # Side-by-side subprojects layout: automatically set the
@@ -148,11 +148,11 @@ set(LLVM_ENABLE_PROJECTS "" CACHE STRING
     "Semicolon-separated list of projects to build (${LLVM_KNOWN_PROJECTS}), or \"all\".")
 # Make sure expansion happens first to not handle "all" in rest of the checks.
 if( LLVM_ENABLE_PROJECTS STREQUAL "all" )
-  set( LLVM_ENABLE_PROJECTS ${LLVM_ALL_PROJECTS})
+    set( LLVM_ENABLE_PROJECTS ${LLVM_ALL_PROJECTS})
 endif()
 
 if ("openmp" IN_LIST LLVM_ENABLE_PROJECTS)
-  message(FATAL_ERROR "
+    message(FATAL_ERROR "
 Support for the LLVM_ENABLE_PROJECTS=openmp build mode has been removed. Please switch to the bootstrapping build
     cmake -S <llvm-project>/llvm -B build -DLLVM_ENABLE_PROJECTS=clang -DLLVM_ENABLE_RUNTIMES=openmp
 or to the runtimes default build
@@ -161,9 +161,9 @@ or to the runtimes default build
 endif()
 
 foreach(proj ${LLVM_ENABLE_PROJECTS})
-  if (NOT proj STREQUAL "llvm" AND NOT "${proj}" IN_LIST LLVM_KNOWN_PROJECTS)
-     MESSAGE(FATAL_ERROR "${proj} isn't a known project: ${LLVM_KNOWN_PROJECTS}. Did you mean to enable it as a runtime in LLVM_ENABLE_RUNTIMES?")
-  endif()
+    if (NOT proj STREQUAL "llvm" AND NOT "${proj}" IN_LIST LLVM_KNOWN_PROJECTS)
+        MESSAGE(FATAL_ERROR "${proj} isn't a known project: ${LLVM_KNOWN_PROJECTS}. Did you mean to enable it as a runtime in LLVM_ENABLE_RUNTIMES?")
+    endif()
 endforeach()
 
 # Select the runtimes to build
@@ -175,68 +175,68 @@ set(LLVM_SUPPORTED_RUNTIMES "libc;libunwind;libcxxabi;libcxx;compiler-rt;openmp;
 set(LLVM_ENABLE_RUNTIMES "" CACHE STRING
   "Semicolon-separated list of runtimes to build, or \"all\" (${LLVM_DEFAULT_RUNTIMES}). Supported runtimes are ${LLVM_SUPPORTED_RUNTIMES}.")
 if(LLVM_ENABLE_RUNTIMES STREQUAL "all")
-  set(LLVM_ENABLE_RUNTIMES ${LLVM_DEFAULT_RUNTIMES})
+    set(LLVM_ENABLE_RUNTIMES ${LLVM_DEFAULT_RUNTIMES})
 endif()
 foreach(proj IN LISTS LLVM_ENABLE_RUNTIMES)
-  if (NOT "${proj}" IN_LIST LLVM_SUPPORTED_RUNTIMES)
-    message(FATAL_ERROR "Runtime \"${proj}\" is not a supported runtime. Supported runtimes are: ${LLVM_SUPPORTED_RUNTIMES}")
-  endif()
+    if (NOT "${proj}" IN_LIST LLVM_SUPPORTED_RUNTIMES)
+        message(FATAL_ERROR "Runtime \"${proj}\" is not a supported runtime. Supported runtimes are: ${LLVM_SUPPORTED_RUNTIMES}")
+    endif()
 endforeach()
 
 if ("flang" IN_LIST LLVM_ENABLE_PROJECTS)
-  if (NOT "mlir" IN_LIST LLVM_ENABLE_PROJECTS)
-    message(STATUS "Enabling MLIR as a dependency to flang")
-    list(APPEND LLVM_ENABLE_PROJECTS "mlir")
-  endif()
+    if (NOT "mlir" IN_LIST LLVM_ENABLE_PROJECTS)
+        message(STATUS "Enabling MLIR as a dependency to flang")
+        list(APPEND LLVM_ENABLE_PROJECTS "mlir")
+    endif()
 
-  if (NOT "clang" IN_LIST LLVM_ENABLE_PROJECTS)
-    message(STATUS "Enabling clang as a dependency to flang")
-    list(APPEND LLVM_ENABLE_PROJECTS "clang")
-  endif()
+    if (NOT "clang" IN_LIST LLVM_ENABLE_PROJECTS)
+        message(STATUS "Enabling clang as a dependency to flang")
+        list(APPEND LLVM_ENABLE_PROJECTS "clang")
+    endif()
 
-  option(FLANG_ENABLE_FLANG_RT "Implicitly add LLVM_ENABLE_RUNTIMES=flang-rt when compiling Flang" ON)
-  if (FLANG_ENABLE_FLANG_RT AND NOT "flang-rt" IN_LIST LLVM_ENABLE_RUNTIMES)
-    message(STATUS "Enabling Flang-RT as a dependency of Flang")
-    list(APPEND LLVM_ENABLE_RUNTIMES "flang-rt")
-  endif ()
+    option(FLANG_ENABLE_FLANG_RT "Implicitly add LLVM_ENABLE_RUNTIMES=flang-rt when compiling Flang" ON)
+    if (FLANG_ENABLE_FLANG_RT AND NOT "flang-rt" IN_LIST LLVM_ENABLE_RUNTIMES)
+        message(STATUS "Enabling Flang-RT as a dependency of Flang")
+        list(APPEND LLVM_ENABLE_RUNTIMES "flang-rt")
+    endif ()
 endif()
 
 if ("lldb" IN_LIST LLVM_ENABLE_PROJECTS)
-  if (NOT "clang" IN_LIST LLVM_ENABLE_PROJECTS)
-    message(STATUS "Enabling clang as a dependency of lldb")
-    list(APPEND LLVM_ENABLE_PROJECTS "clang")
-  endif()
+    if (NOT "clang" IN_LIST LLVM_ENABLE_PROJECTS)
+        message(STATUS "Enabling clang as a dependency of lldb")
+        list(APPEND LLVM_ENABLE_PROJECTS "clang")
+    endif()
 endif ()
 
 if ("libc" IN_LIST LLVM_ENABLE_PROJECTS)
-  message(WARNING "Using LLVM_ENABLE_PROJECTS=libc is deprecated now, and will "
+    message(WARNING "Using LLVM_ENABLE_PROJECTS=libc is deprecated now, and will "
     "become a fatal error in a future release. Please use "
     "-DLLVM_ENABLE_RUNTIMES=libc or see the instructions at "
     "https://libc.llvm.org/ for building the runtimes.")
 endif()
 
 if ("compiler-rt" IN_LIST LLVM_ENABLE_PROJECTS)
-  message(WARNING "Using LLVM_ENABLE_PROJECTS=compiler-rt is deprecated now, and will "
+    message(WARNING "Using LLVM_ENABLE_PROJECTS=compiler-rt is deprecated now, and will "
     "become a fatal error in a future release.  Please use "
     "-DLLVM_ENABLE_RUNTIMES=compiler-rt or see the instructions at "
     "https://compiler-rt.llvm.org/ for building the runtimes.")
 endif()
 
 if ("offload" IN_LIST LLVM_ENABLE_PROJECTS)
-  message(WARNING "Using LLVM_ENABLE_PROJECTS=offload is deprecated now, and will "
+    message(WARNING "Using LLVM_ENABLE_PROJECTS=offload is deprecated now, and will "
     "become a fatal error in a future release.  Please use "
     "-DLLVM_ENABLE_RUNTIMES=offload or see the instructions at "
     "https://openmp.llvm.org/ for building the runtimes.")
 endif()
 
 if ("flang-rt" IN_LIST LLVM_ENABLE_RUNTIMES)
-  if (NOT "flang" IN_LIST LLVM_ENABLE_PROJECTS)
-    message(FATAL_ERROR "Flang is not enabled, but is required for the Flang-RT runtime")
-  endif ()
+    if (NOT "flang" IN_LIST LLVM_ENABLE_PROJECTS)
+        message(FATAL_ERROR "Flang is not enabled, but is required for the Flang-RT runtime")
+    endif ()
 endif ()
 
 if ("libclc" IN_LIST LLVM_ENABLE_PROJECTS)
-  message(WARNING "Using LLVM_ENABLE_PROJECTS=libclc is deprecated now, and will "
+    message(WARNING "Using LLVM_ENABLE_PROJECTS=libclc is deprecated now, and will "
     "become a fatal error in a future release.  Please use "
     "-DLLVM_ENABLE_RUNTIMES=libclc or see the instructions at "
     "https://libclc.llvm.org/ for building the runtimes.")
@@ -245,42 +245,42 @@ endif()
 # Set a shorthand option to enable the GPU build of the 'libc' project.
 option(LIBC_GPU_BUILD "Enable the 'libc' project targeting the GPU" OFF)
 if(LIBC_GPU_BUILD)
-  if(LLVM_RUNTIME_TARGETS)
-    list(APPEND LLVM_RUNTIME_TARGETS "nvptx64-nvidia-cuda" "amdgcn-amd-amdhsa")
-  else()
-    set(LLVM_RUNTIME_TARGETS "default;nvptx64-nvidia-cuda;amdgcn-amd-amdhsa")
-  endif()
-  list(APPEND RUNTIMES_nvptx64-nvidia-cuda_LLVM_ENABLE_RUNTIMES "libc")
-  list(APPEND RUNTIMES_amdgcn-amd-amdhsa_LLVM_ENABLE_RUNTIMES "libc")
+    if(LLVM_RUNTIME_TARGETS)
+        list(APPEND LLVM_RUNTIME_TARGETS "nvptx64-nvidia-cuda" "amdgcn-amd-amdhsa")
+    else()
+        set(LLVM_RUNTIME_TARGETS "default;nvptx64-nvidia-cuda;amdgcn-amd-amdhsa")
+    endif()
+    list(APPEND RUNTIMES_nvptx64-nvidia-cuda_LLVM_ENABLE_RUNTIMES "libc")
+    list(APPEND RUNTIMES_amdgcn-amd-amdhsa_LLVM_ENABLE_RUNTIMES "libc")
 endif()
 
 # Set up Arm64X build of the OpenMP runtime
 option(LIBOMP_ENABLE_ARM64X "Build the OpenMP library as Arm64X for compatibility with both Arm64 and Arm64EC" OFF)
 if(LIBOMP_ENABLE_ARM64X)
-  if(NOT CMAKE_HOST_WIN32 AND NOT CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "ARM64")
-    message(FATAL_ERROR "Arm64X builds are only supported on Windows hosts.")
-  endif()
-  if(NOT LLVM_RUNTIME_TARGETS)
-    set(LLVM_RUNTIME_TARGETS "default")
-  endif()
+    if(NOT CMAKE_HOST_WIN32 AND NOT CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "ARM64")
+        message(FATAL_ERROR "Arm64X builds are only supported on Windows hosts.")
+    endif()
+    if(NOT LLVM_RUNTIME_TARGETS)
+        set(LLVM_RUNTIME_TARGETS "default")
+    endif()
 
-  if(NOT "arm64ec-pc-windows-msvc" IN_LIST LLVM_RUNTIME_TARGETS)
-    list(APPEND LLVM_RUNTIME_TARGETS "arm64ec-pc-windows-msvc")
-  endif()
-  set(RUNTIMES_arm64ec-pc-windows-msvc_LIBOMP_ENABLE_ARM64X ON)
+    if(NOT "arm64ec-pc-windows-msvc" IN_LIST LLVM_RUNTIME_TARGETS)
+        list(APPEND LLVM_RUNTIME_TARGETS "arm64ec-pc-windows-msvc")
+    endif()
+    set(RUNTIMES_arm64ec-pc-windows-msvc_LIBOMP_ENABLE_ARM64X ON)
 endif()
 
 foreach(_name ${LLVM_RUNTIME_TARGETS})
-  if("libc" IN_LIST RUNTIMES_${_name}_LLVM_ENABLE_RUNTIMES)
-    if("${_name}" STREQUAL "amdgcn-amd-amdhsa" OR "${_name}" STREQUAL "nvptx64-nvidia-cuda" OR "${_name}" STREQUAL "spirv64-intel-unknown")
-      set(LLVM_LIBC_GPU_BUILD ON)
+    if("libc" IN_LIST RUNTIMES_${_name}_LLVM_ENABLE_RUNTIMES)
+        if("${_name}" STREQUAL "amdgcn-amd-amdhsa" OR "${_name}" STREQUAL "nvptx64-nvidia-cuda" OR "${_name}" STREQUAL "spirv64-intel-unknown")
+            set(LLVM_LIBC_GPU_BUILD ON)
+        endif()
     endif()
-  endif()
 endforeach()
 if("${LIBC_TARGET_TRIPLE}" STREQUAL "amdgcn-amd-amdhsa" OR
    "${LIBC_TARGET_TRIPLE}" STREQUAL "nvptx64-nvidia-cuda" OR
    "${LIBC_TARGET_TRIPLE}" STREQUAL "spirv64-intel-unknown")
-  set(LLVM_LIBC_GPU_BUILD ON)
+    set(LLVM_LIBC_GPU_BUILD ON)
 endif()
 
 # LLVM_ENABLE_PROJECTS_USED is `ON` if the user has ever used the
@@ -301,98 +301,98 @@ set(LLVM_ENABLE_PROJECTS_USED OFF CACHE BOOL "")
 mark_as_advanced(LLVM_ENABLE_PROJECTS_USED)
 
 if (LLVM_ENABLE_PROJECTS_USED OR NOT LLVM_ENABLE_PROJECTS STREQUAL "")
-  set(LLVM_ENABLE_PROJECTS_USED ON CACHE BOOL "" FORCE)
-  foreach(proj ${LLVM_KNOWN_PROJECTS} ${LLVM_EXTERNAL_PROJECTS})
-    string(TOUPPER "${proj}" upper_proj)
-    string(REGEX REPLACE "-" "_" upper_proj ${upper_proj})
-    if ("${proj}" IN_LIST LLVM_ENABLE_PROJECTS)
-      message(STATUS "${proj} project is enabled")
-      set(SHOULD_ENABLE_PROJECT TRUE)
-      set(PROJ_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../${proj}")
-      if(NOT EXISTS "${PROJ_DIR}" OR NOT IS_DIRECTORY "${PROJ_DIR}")
-        message(FATAL_ERROR "LLVM_ENABLE_PROJECTS requests ${proj} but directory not found: ${PROJ_DIR}")
-      endif()
-      if( LLVM_EXTERNAL_${upper_proj}_SOURCE_DIR STREQUAL "" )
-        set(LLVM_EXTERNAL_${upper_proj}_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../${proj}" CACHE PATH "" FORCE)
-      else()
-        set(LLVM_EXTERNAL_${upper_proj}_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../${proj}" CACHE PATH "")
-      endif()
-    elseif ("${proj}" IN_LIST LLVM_EXTERNAL_PROJECTS)
-      message(STATUS "${proj} project is enabled")
-      set(SHOULD_ENABLE_PROJECT TRUE)
-    else()
-      message(STATUS "${proj} project is disabled")
-      set(SHOULD_ENABLE_PROJECT FALSE)
-    endif()
-    # Force `LLVM_TOOL_${upper_proj}_BUILD` variables to have values that
-    # corresponds with `LLVM_ENABLE_PROJECTS`. This prevents the user setting
-    # `LLVM_TOOL_${upper_proj}_BUILD` variables externally. At some point
-    # we should deprecate allowing users to set these variables by turning them
-    # into normal CMake variables rather than cache variables.
-    set(LLVM_TOOL_${upper_proj}_BUILD
+    set(LLVM_ENABLE_PROJECTS_USED ON CACHE BOOL "" FORCE)
+    foreach(proj ${LLVM_KNOWN_PROJECTS} ${LLVM_EXTERNAL_PROJECTS})
+        string(TOUPPER "${proj}" upper_proj)
+        string(REGEX REPLACE "-" "_" upper_proj ${upper_proj})
+        if ("${proj}" IN_LIST LLVM_ENABLE_PROJECTS)
+            message(STATUS "${proj} project is enabled")
+            set(SHOULD_ENABLE_PROJECT TRUE)
+            set(PROJ_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../${proj}")
+            if(NOT EXISTS "${PROJ_DIR}" OR NOT IS_DIRECTORY "${PROJ_DIR}")
+                message(FATAL_ERROR "LLVM_ENABLE_PROJECTS requests ${proj} but directory not found: ${PROJ_DIR}")
+            endif()
+            if( LLVM_EXTERNAL_${upper_proj}_SOURCE_DIR STREQUAL "" )
+                set(LLVM_EXTERNAL_${upper_proj}_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../${proj}" CACHE PATH "" FORCE)
+            else()
+                set(LLVM_EXTERNAL_${upper_proj}_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../${proj}" CACHE PATH "")
+            endif()
+        elseif ("${proj}" IN_LIST LLVM_EXTERNAL_PROJECTS)
+            message(STATUS "${proj} project is enabled")
+            set(SHOULD_ENABLE_PROJECT TRUE)
+        else()
+            message(STATUS "${proj} project is disabled")
+            set(SHOULD_ENABLE_PROJECT FALSE)
+        endif()
+        # Force `LLVM_TOOL_${upper_proj}_BUILD` variables to have values that
+        # corresponds with `LLVM_ENABLE_PROJECTS`. This prevents the user setting
+        # `LLVM_TOOL_${upper_proj}_BUILD` variables externally. At some point
+        # we should deprecate allowing users to set these variables by turning them
+        # into normal CMake variables rather than cache variables.
+        set(LLVM_TOOL_${upper_proj}_BUILD
       ${SHOULD_ENABLE_PROJECT}
       CACHE
       BOOL "Whether to build ${upper_proj} as part of LLVM" FORCE
     )
-  endforeach()
+    endforeach()
 endif()
 unset(SHOULD_ENABLE_PROJECT)
 
 # Build llvm with ccache if the package is present
 set(LLVM_CCACHE_BUILD OFF CACHE BOOL "Set to ON for a ccache enabled build")
 if(LLVM_CCACHE_BUILD)
-  find_program(CCACHE_PROGRAM ccache)
-  if(CCACHE_PROGRAM)
-    set(LLVM_CCACHE_MAXSIZE "" CACHE STRING "Size of ccache")
-    set(LLVM_CCACHE_DIR "" CACHE STRING "Directory to keep ccached data")
-    set(LLVM_CCACHE_PARAMS "CCACHE_CPP2=yes CCACHE_HASHDIR=yes CCACHE_SLOPPINESS=pch_defines,time_macros"
+    find_program(CCACHE_PROGRAM ccache)
+    if(CCACHE_PROGRAM)
+        set(LLVM_CCACHE_MAXSIZE "" CACHE STRING "Size of ccache")
+        set(LLVM_CCACHE_DIR "" CACHE STRING "Directory to keep ccached data")
+        set(LLVM_CCACHE_PARAMS "CCACHE_CPP2=yes CCACHE_HASHDIR=yes CCACHE_SLOPPINESS=pch_defines,time_macros"
         CACHE STRING "Parameters to pass through to ccache")
 
-    if(NOT CMAKE_HOST_WIN32)
-      set(CCACHE_PROGRAM "${LLVM_CCACHE_PARAMS} ${CCACHE_PROGRAM}")
-      if (LLVM_CCACHE_MAXSIZE)
-        set(CCACHE_PROGRAM "CCACHE_MAXSIZE=${LLVM_CCACHE_MAXSIZE} ${CCACHE_PROGRAM}")
-      endif()
-      if (LLVM_CCACHE_DIR)
-        set(CCACHE_PROGRAM "CCACHE_DIR=${LLVM_CCACHE_DIR} ${CCACHE_PROGRAM}")
-      endif()
-      set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ${CCACHE_PROGRAM})
+        if(NOT CMAKE_HOST_WIN32)
+            set(CCACHE_PROGRAM "${LLVM_CCACHE_PARAMS} ${CCACHE_PROGRAM}")
+            if (LLVM_CCACHE_MAXSIZE)
+                set(CCACHE_PROGRAM "CCACHE_MAXSIZE=${LLVM_CCACHE_MAXSIZE} ${CCACHE_PROGRAM}")
+            endif()
+            if (LLVM_CCACHE_DIR)
+                set(CCACHE_PROGRAM "CCACHE_DIR=${LLVM_CCACHE_DIR} ${CCACHE_PROGRAM}")
+            endif()
+            set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ${CCACHE_PROGRAM})
 
-      if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        # ccache with PCH can lead to false-positives when only a macro
-        # definition changes with non-Clang compilers, because macro definitions
-        # are not compared in preprocessed mode.
-        # See: https://github.com/ccache/ccache/issues/1668
-        if(NOT DEFINED CMAKE_DISABLE_PRECOMPILE_HEADERS)
-          message(NOTICE "Using ccache with precompiled headers with non-Clang "
+            if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+                # ccache with PCH can lead to false-positives when only a macro
+                # definition changes with non-Clang compilers, because macro definitions
+                # are not compared in preprocessed mode.
+                # See: https://github.com/ccache/ccache/issues/1668
+                if(NOT DEFINED CMAKE_DISABLE_PRECOMPILE_HEADERS)
+                    message(NOTICE "Using ccache with precompiled headers with non-Clang "
             "compilers is not supported. CMAKE_DISABLE_PRECOMPILE_HEADERS will be set to ON. "
             "Pass -DCMAKE_DISABLE_PRECOMPILE_HEADERS=OFF to override this.")
-          set(CMAKE_DISABLE_PRECOMPILE_HEADERS "ON")
-        elseif(NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
-          message(WARNING "Using ccache with precompiled headers with non-Clang "
+                    set(CMAKE_DISABLE_PRECOMPILE_HEADERS "ON")
+                elseif(NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
+                    message(WARNING "Using ccache with precompiled headers with non-Clang "
             "compilers is not supported.")
-        endif()
-      endif()
-    else()
-      # Until a way to reliably configure ccache on Windows is found,
-      # disable precompiled headers for Windows + ccache builds
-      if(NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
-        message(WARNING "Using ccache with precompiled headers on Windows is currently not supported.
+                endif()
+            endif()
+        else()
+            # Until a way to reliably configure ccache on Windows is found,
+            # disable precompiled headers for Windows + ccache builds
+            if(NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
+                message(WARNING "Using ccache with precompiled headers on Windows is currently not supported.
           CMAKE_DISABLE_PRECOMPILE_HEADERS will be set to ON.")
-        set(CMAKE_DISABLE_PRECOMPILE_HEADERS "ON")
-      endif()
-      if(LLVM_CCACHE_MAXSIZE OR LLVM_CCACHE_DIR OR
+                set(CMAKE_DISABLE_PRECOMPILE_HEADERS "ON")
+            endif()
+            if(LLVM_CCACHE_MAXSIZE OR LLVM_CCACHE_DIR OR
          NOT LLVM_CCACHE_PARAMS MATCHES "CCACHE_CPP2=yes CCACHE_HASHDIR=yes CCACHE_SLOPPINESS=pch_defines,time_macros")
-        message(FATAL_ERROR "Ccache configuration through CMake is not supported on Windows. Please use environment variables.")
-      endif()
-      # RULE_LAUNCH_COMPILE should work with Ninja but currently has issues
-      # with cmd.exe and some MSVC tools other than cl.exe
-      set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
-      set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
+                message(FATAL_ERROR "Ccache configuration through CMake is not supported on Windows. Please use environment variables.")
+            endif()
+            # RULE_LAUNCH_COMPILE should work with Ninja but currently has issues
+            # with cmd.exe and some MSVC tools other than cl.exe
+            set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
+            set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
+        endif()
+    else()
+        message(FATAL_ERROR "Unable to find the program ccache. Set LLVM_CCACHE_BUILD to OFF")
     endif()
-  else()
-    message(FATAL_ERROR "Unable to find the program ccache. Set LLVM_CCACHE_BUILD to OFF")
-  endif()
 endif()
 
 set(LLVM_EXTERNAL_PROJECT_BUILD_TOOL_ARGS "" CACHE STRING
@@ -405,18 +405,18 @@ option(LLVM_DEPENDENCY_DEBUGGING "Dependency debugging mode to verify correctly 
 # enabled. In particular you cannot use ccache because we want to force compile
 # operations to always happen.
 if(LLVM_DEPENDENCY_DEBUGGING)
-  if(NOT CMAKE_HOST_APPLE)
-    message(FATAL_ERROR "Dependency debugging is only currently supported on Darwin hosts.")
-  endif()
-  if(LLVM_CCACHE_BUILD)
-    message(FATAL_ERROR "Cannot enable dependency debugging while using ccache.")
-  endif()
+    if(NOT CMAKE_HOST_APPLE)
+        message(FATAL_ERROR "Dependency debugging is only currently supported on Darwin hosts.")
+    endif()
+    if(LLVM_CCACHE_BUILD)
+        message(FATAL_ERROR "Cannot enable dependency debugging while using ccache.")
+    endif()
 endif()
 
 option(LLVM_ENABLE_DAGISEL_COV "Debug: Prints tablegen patterns that were used for selecting" OFF)
 option(LLVM_ENABLE_GISEL_COV "Enable collection of GlobalISel rule coverage" OFF)
 if(LLVM_ENABLE_GISEL_COV)
-  set(LLVM_GISEL_COV_PREFIX "${CMAKE_BINARY_DIR}/gisel-coverage-" CACHE STRING "Provide a filename prefix to collect the GlobalISel rule coverage")
+    set(LLVM_GISEL_COV_PREFIX "${CMAKE_BINARY_DIR}/gisel-coverage-" CACHE STRING "Provide a filename prefix to collect the GlobalISel rule coverage")
 endif()
 
 # Add path for custom modules
@@ -452,7 +452,7 @@ option(LLVM_INSTALL_MODULEMAPS "Install the modulemap files in the 'install' tar
 
 option(LLVM_USE_FOLDERS "Enable solution folders in Visual Studio. Disable for Express versions." ON)
 if ( LLVM_USE_FOLDERS )
-  set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+    set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 endif()
 
 include(VersionFromVCS)
@@ -479,10 +479,10 @@ set(LLDB_BUG_REPORT_URL "${BUG_REPORT_URL}" CACHE STRING
 
 # Configure CPack.
 if(NOT DEFINED CPACK_PACKAGE_INSTALL_DIRECTORY)
-  set(CPACK_PACKAGE_INSTALL_DIRECTORY "LLVM")
+    set(CPACK_PACKAGE_INSTALL_DIRECTORY "LLVM")
 endif()
 if(NOT DEFINED CPACK_PACKAGE_VENDOR)
-  set(CPACK_PACKAGE_VENDOR "LLVM")
+    set(CPACK_PACKAGE_VENDOR "LLVM")
 endif()
 set(CPACK_PACKAGE_VERSION_MAJOR ${LLVM_VERSION_MAJOR})
 set(CPACK_PACKAGE_VERSION_MINOR ${LLVM_VERSION_MINOR})
@@ -490,33 +490,33 @@ set(CPACK_PACKAGE_VERSION_PATCH ${LLVM_VERSION_PATCH})
 set(CPACK_PACKAGE_VERSION ${PACKAGE_VERSION})
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.TXT")
 if(WIN32 AND NOT UNIX)
-  if(NOT DEFINED CPACK_PACKAGE_INSTALL_REGISTRY_KEY)
-    set(CPACK_PACKAGE_INSTALL_REGISTRY_KEY "LLVM")
-  endif()
-  set(CPACK_PACKAGE_ICON "${CMAKE_CURRENT_SOURCE_DIR}\\\\cmake\\\\nsis_logo.bmp")
-  if (CPACK_GENERATOR STREQUAL "NSIS")
-    set(CPACK_NSIS_COMPRESSOR "/SOLID lzma \r\n SetCompressorDictSize 32")
-    set(CPACK_NSIS_MUI_ICON "${CMAKE_CURRENT_SOURCE_DIR}\\\\cmake\\\\nsis_icon.ico")
-    set(CPACK_NSIS_MUI_UNIICON "${CMAKE_CURRENT_SOURCE_DIR}\\\\cmake\\\\nsis_icon.ico")
-    set(CPACK_NSIS_MODIFY_PATH "ON")
-    set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL "ON")
-    if( CMAKE_CL_64 )
-      if(NOT DEFINED CPACK_NSIS_INSTALL_ROOT)
-        set(CPACK_NSIS_INSTALL_ROOT "$PROGRAMFILES64")
-      endif()
+    if(NOT DEFINED CPACK_PACKAGE_INSTALL_REGISTRY_KEY)
+        set(CPACK_PACKAGE_INSTALL_REGISTRY_KEY "LLVM")
     endif()
-  endif()
-  if(CPACK_GENERATOR STREQUAL "WIX")
-    set(CPACK_WIX_PRODUCT_ICON "${CMAKE_CURRENT_SOURCE_DIR}\\\\cmake\\\\nsis_icon.ico")
-    # -sval: the WIX installer needs admin privileges unless we use this flag.
-    # -dcl:high: light defaults the cabinet to MSZIP (deflate, 32 KiB window),
-    # which captures almost no redundancy between the payload's binaries.  high
-    # selects LZX with a 21-bit (2 MiB) window instead.  That is the strongest
-    # compression available here: Windows Installer has to be able to read the
-    # cabinet itself, and CAB supports only MSZIP/LZX/Quantum, so an MSI cannot
-    # use LZMA the way the NSIS generator does.
-    set(CPACK_WIX_LIGHT_EXTRA_FLAGS "-sval" "-dcl:high")
-  endif()
+    set(CPACK_PACKAGE_ICON "${CMAKE_CURRENT_SOURCE_DIR}\\\\cmake\\\\nsis_logo.bmp")
+    if (CPACK_GENERATOR STREQUAL "NSIS")
+        set(CPACK_NSIS_COMPRESSOR "/SOLID lzma \r\n SetCompressorDictSize 32")
+        set(CPACK_NSIS_MUI_ICON "${CMAKE_CURRENT_SOURCE_DIR}\\\\cmake\\\\nsis_icon.ico")
+        set(CPACK_NSIS_MUI_UNIICON "${CMAKE_CURRENT_SOURCE_DIR}\\\\cmake\\\\nsis_icon.ico")
+        set(CPACK_NSIS_MODIFY_PATH "ON")
+        set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL "ON")
+        if( CMAKE_CL_64 )
+            if(NOT DEFINED CPACK_NSIS_INSTALL_ROOT)
+                set(CPACK_NSIS_INSTALL_ROOT "$PROGRAMFILES64")
+            endif()
+        endif()
+    endif()
+    if(CPACK_GENERATOR STREQUAL "WIX")
+        set(CPACK_WIX_PRODUCT_ICON "${CMAKE_CURRENT_SOURCE_DIR}\\\\cmake\\\\nsis_icon.ico")
+        # -sval: the WIX installer needs admin privileges unless we use this flag.
+        # -dcl:high: light defaults the cabinet to MSZIP (deflate, 32 KiB window),
+        # which captures almost no redundancy between the payload's binaries.  high
+        # selects LZX with a 21-bit (2 MiB) window instead.  That is the strongest
+        # compression available here: Windows Installer has to be able to read the
+        # cabinet itself, and CAB supports only MSZIP/LZX/Quantum, so an MSI cannot
+        # use LZMA the way the NSIS generator does.
+        set(CPACK_WIX_LIGHT_EXTRA_FLAGS "-sval" "-dcl:high")
+    endif()
 endif()
 include(CPack)
 
@@ -526,7 +526,7 @@ include(CPack)
 # (which would end up getting picked up by header search, instead of the correct
 # versions).
 if( CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_CURRENT_BINARY_DIR AND NOT MSVC_IDE )
-  message(FATAL_ERROR "In-source builds are not allowed.
+    message(FATAL_ERROR "In-source builds are not allowed.
 Please create a directory and run cmake from there, passing the path
 to this source directory as the last argument.
 This process created the file `CMakeCache.txt' and the directory `CMakeFiles'.
@@ -543,7 +543,7 @@ string (TOUPPER "${ALLOWED_BUILD_TYPES_STRING}" uppercase_ALLOWED_BUILD_TYPES)
 
 if (CMAKE_BUILD_TYPE AND
     NOT uppercase_CMAKE_BUILD_TYPE MATCHES "^(${uppercase_ALLOWED_BUILD_TYPES})$")
-  message(FATAL_ERROR "Unknown value for CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
+    message(FATAL_ERROR "Unknown value for CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 endif()
 
 # LLVM_INSTALL_PACKAGE_DIR needs to be declared prior to adding the tools
@@ -568,10 +568,10 @@ mark_as_advanced(LLVM_EXAMPLES_INSTALL_DIR)
 set(LLVM_RUNTIME_OUTPUT_INTDIR ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/bin)
 set(LLVM_LIBRARY_OUTPUT_INTDIR ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/lib${LLVM_LIBDIR_SUFFIX})
 if(WIN32 OR CYGWIN)
-  # DLL platform -- put DLLs into bin.
-  set(LLVM_SHLIB_OUTPUT_INTDIR ${LLVM_RUNTIME_OUTPUT_INTDIR})
+    # DLL platform -- put DLLs into bin.
+    set(LLVM_SHLIB_OUTPUT_INTDIR ${LLVM_RUNTIME_OUTPUT_INTDIR})
 else()
-  set(LLVM_SHLIB_OUTPUT_INTDIR ${LLVM_LIBRARY_OUTPUT_INTDIR})
+    set(LLVM_SHLIB_OUTPUT_INTDIR ${LLVM_LIBRARY_OUTPUT_INTDIR})
 endif()
 
 # Each of them corresponds to llvm-config's.
@@ -633,14 +633,14 @@ option(BUILD_SHARED_LIBS
 
 option(LLVM_ENABLE_BACKTRACES "Enable embedding backtraces on crash." ON)
 if(LLVM_ENABLE_BACKTRACES)
-  set(ENABLE_BACKTRACES 1)
+    set(ENABLE_BACKTRACES 1)
 endif()
 
 option(LLVM_ENABLE_UNWIND_TABLES "Emit unwind tables for the libraries" ON)
 
 option(LLVM_ENABLE_CRASH_OVERRIDES "Enable crash overrides." ON)
 if(LLVM_ENABLE_CRASH_OVERRIDES)
-  set(ENABLE_CRASH_OVERRIDES 1)
+    set(ENABLE_CRASH_OVERRIDES 1)
 endif()
 
 option(LLVM_ENABLE_CRASH_DUMPS "Turn on memory dumps on crashes. Currently only implemented on Windows." OFF)
@@ -651,9 +651,9 @@ set_property(CACHE LLVM_ENABLE_DEBUGLOC_COVERAGE_TRACKING PROPERTY STRINGS DISAB
 
 set(WINDOWS_PREFER_FORWARD_SLASH_DEFAULT OFF)
 if (MINGW)
-  # Cygwin doesn't identify itself as Windows, and thus gets path::Style::posix
-  # as native path style, regardless of what this is set to.
-  set(WINDOWS_PREFER_FORWARD_SLASH_DEFAULT ON)
+    # Cygwin doesn't identify itself as Windows, and thus gets path::Style::posix
+    # as native path style, regardless of what this is set to.
+    set(WINDOWS_PREFER_FORWARD_SLASH_DEFAULT ON)
 endif()
 option(LLVM_WINDOWS_PREFER_FORWARD_SLASH "Prefer path names with forward slashes on Windows." ${WINDOWS_PREFER_FORWARD_SLASH_DEFAULT})
 
@@ -678,7 +678,7 @@ set(LLVM_ENABLE_ICU "OFF" CACHE STRING "Use ICU for text encoding conversion sup
 
 # After Windows 10 1903, icu.lib is available.
 if(WIN32 AND CMAKE_SYSTEM_VERSION VERSION_GREATER_EQUAL "10.0.18362")
-  cmake_dependent_option(LLVM_ENABLE_WINDOWS_ICU "Use Windows vendored ICU if possible" OFF LLVM_ENABLE_ICU OFF)
+    cmake_dependent_option(LLVM_ENABLE_WINDOWS_ICU "Use Windows vendored ICU if possible" OFF LLVM_ENABLE_ICU OFF)
 endif()
 
 set(LLVM_ENABLE_ICONV "OFF" CACHE STRING "Use iconv for text encoding conversion support if available. Can be ON, OFF, or FORCE_ON")
@@ -703,41 +703,41 @@ option(LLVM_ENABLE_Z3_SOLVER
 )
 
 if (LLVM_ENABLE_Z3_SOLVER)
-  find_package(Z3 4.8.9)
+    find_package(Z3 4.8.9)
 
-  if (LLVM_Z3_INSTALL_DIR)
-    if (NOT Z3_FOUND)
-      message(FATAL_ERROR "Z3 >= 4.8.9 has not been found in LLVM_Z3_INSTALL_DIR: ${LLVM_Z3_INSTALL_DIR}.")
+    if (LLVM_Z3_INSTALL_DIR)
+        if (NOT Z3_FOUND)
+            message(FATAL_ERROR "Z3 >= 4.8.9 has not been found in LLVM_Z3_INSTALL_DIR: ${LLVM_Z3_INSTALL_DIR}.")
+        endif()
     endif()
-  endif()
 
-  if (NOT Z3_FOUND)
-    message(FATAL_ERROR "LLVM_ENABLE_Z3_SOLVER cannot be enabled when Z3 is not available.")
-  endif()
+    if (NOT Z3_FOUND)
+        message(FATAL_ERROR "LLVM_ENABLE_Z3_SOLVER cannot be enabled when Z3 is not available.")
+    endif()
 
-  set(LLVM_WITH_Z3 1)
+    set(LLVM_WITH_Z3 1)
 endif()
 
 set(LLVM_ENABLE_Z3_SOLVER_DEFAULT "${Z3_FOUND}")
 
 include(FindLibcCommonUtils)
 if(NOT TARGET llvm-libc-common-utilities)
-  message(FATAL_ERROR "LLVM libc is not found at ${libc_path}.")
+    message(FATAL_ERROR "LLVM libc is not found at ${libc_path}.")
 endif()
 
 if( LLVM_TARGETS_TO_BUILD STREQUAL "all" )
-  set( LLVM_TARGETS_TO_BUILD ${LLVM_ALL_TARGETS} )
+    set( LLVM_TARGETS_TO_BUILD ${LLVM_ALL_TARGETS} )
 endif()
 
 if(LLVM_EXPERIMENTAL_TARGETS_TO_BUILD STREQUAL "all")
-  set(LLVM_EXPERIMENTAL_TARGETS_TO_BUILD ${LLVM_ALL_EXPERIMENTAL_TARGETS})
+    set(LLVM_EXPERIMENTAL_TARGETS_TO_BUILD ${LLVM_ALL_EXPERIMENTAL_TARGETS})
 endif()
 
 if("flang" IN_LIST LLVM_ENABLE_PROJECTS AND
    "AArch64" IN_LIST LLVM_TARGETS_TO_BUILD AND
    NOT ("compiler-rt" IN_LIST LLVM_ENABLE_RUNTIMES OR "compiler-rt" IN_LIST LLVM_ENABLE_PROJECTS))
-  message(STATUS "Enabling compiler-rt as a dependency of Flang")
-  list(APPEND LLVM_ENABLE_RUNTIMES "compiler-rt")
+    message(STATUS "Enabling compiler-rt as a dependency of Flang")
+    list(APPEND LLVM_ENABLE_RUNTIMES "compiler-rt")
 endif()
 
 set(LLVM_TARGETS_TO_BUILD
@@ -746,13 +746,13 @@ set(LLVM_TARGETS_TO_BUILD
 list(REMOVE_DUPLICATES LLVM_TARGETS_TO_BUILD)
 
 if (NOT CMAKE_SYSTEM_NAME MATCHES "OS390")
-  option(LLVM_ENABLE_PIC "Build Position-Independent Code" ON)
+    option(LLVM_ENABLE_PIC "Build Position-Independent Code" ON)
 endif()
 option(LLVM_ENABLE_MODULES "Compile with C++ modules enabled." OFF)
 if("${CMAKE_SYSTEM_NAME}" MATCHES "Darwin")
-  option(LLVM_ENABLE_MODULE_DEBUGGING "Compile with -gmodules." ON)
+    option(LLVM_ENABLE_MODULE_DEBUGGING "Compile with -gmodules." ON)
 else()
-  option(LLVM_ENABLE_MODULE_DEBUGGING "Compile with -gmodules." OFF)
+    option(LLVM_ENABLE_MODULE_DEBUGGING "Compile with -gmodules." OFF)
 endif()
 option(LLVM_ENABLE_LOCAL_SUBMODULE_VISIBILITY "Compile with -fmodules-local-submodule-visibility." ON)
 option(LLVM_ENABLE_LIBCXX "Use libc++ if available." OFF)
@@ -766,9 +766,9 @@ option(LLVM_ENABLE_DUMP "Enable dump functions even when assertions are disabled
 option(LLVM_UNREACHABLE_OPTIMIZE "Optimize llvm_unreachable() as undefined behavior (default), guaranteed trap when OFF" ON)
 
 if( NOT uppercase_CMAKE_BUILD_TYPE STREQUAL "DEBUG" )
-  option(LLVM_ENABLE_ASSERTIONS "Enable assertions" OFF)
+    option(LLVM_ENABLE_ASSERTIONS "Enable assertions" OFF)
 else()
-  option(LLVM_ENABLE_ASSERTIONS "Enable assertions" ON)
+    option(LLVM_ENABLE_ASSERTIONS "Enable assertions" ON)
 endif()
 
 option(LLVM_ENABLE_IO_SANDBOX "Enable IO sandboxing in supported tools" ${LLVM_ENABLE_ASSERTIONS})
@@ -791,11 +791,11 @@ option(LLVM_USE_INTEL_JITEVENTS
   OFF)
 
 if( LLVM_USE_INTEL_JITEVENTS )
-  # Verify we are on a supported platform
-  if( NOT CMAKE_SYSTEM_NAME MATCHES "Windows" AND NOT CMAKE_SYSTEM_NAME MATCHES "Linux" )
-    message(FATAL_ERROR
+    # Verify we are on a supported platform
+    if( NOT CMAKE_SYSTEM_NAME MATCHES "Windows" AND NOT CMAKE_SYSTEM_NAME MATCHES "Linux" )
+        message(FATAL_ERROR
       "Intel JIT API support is available on Linux and Windows only.")
-  endif()
+    endif()
 endif( LLVM_USE_INTEL_JITEVENTS )
 
 option(LLVM_USE_OPROFILE
@@ -812,9 +812,9 @@ set(LLVM_CODESIGNING_IDENTITY "" CACHE STRING
 
 # If enabled, verify we are on a platform that supports oprofile.
 if( LLVM_USE_OPROFILE )
-  if( NOT CMAKE_SYSTEM_NAME MATCHES "Linux" )
-    message(FATAL_ERROR "OProfile support is available on Linux only.")
-  endif( NOT CMAKE_SYSTEM_NAME MATCHES "Linux" )
+    if( NOT CMAKE_SYSTEM_NAME MATCHES "Linux" )
+        message(FATAL_ERROR "OProfile support is available on Linux only.")
+    endif( NOT CMAKE_SYSTEM_NAME MATCHES "Linux" )
 endif( LLVM_USE_OPROFILE )
 
 option(LLVM_USE_PERF
@@ -822,9 +822,9 @@ option(LLVM_USE_PERF
 
 # If enabled, verify we are on a platform that supports perf.
 if( LLVM_USE_PERF )
-  if( NOT CMAKE_SYSTEM_NAME MATCHES "Linux" )
-    message(FATAL_ERROR "perf support is available on Linux only.")
-  endif( NOT CMAKE_SYSTEM_NAME MATCHES "Linux" )
+    if( NOT CMAKE_SYSTEM_NAME MATCHES "Linux" )
+        message(FATAL_ERROR "perf support is available on Linux only.")
+    endif( NOT CMAKE_SYSTEM_NAME MATCHES "Linux" )
 endif( LLVM_USE_PERF )
 
 set(LLVM_USE_SANITIZER "" CACHE STRING
@@ -843,66 +843,66 @@ option(LLVM_USE_SPLIT_DWARF
 # Define an option controlling whether we should build for 32-bit on 64-bit
 # platforms, where supported.
 if( CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT (WIN32 OR "${CMAKE_SYSTEM_NAME}" MATCHES "AIX"))
-  # TODO: support other platforms and toolchains.
-  option(LLVM_BUILD_32_BITS "Build 32 bits executables and libraries." OFF)
+    # TODO: support other platforms and toolchains.
+    option(LLVM_BUILD_32_BITS "Build 32 bits executables and libraries." OFF)
 endif()
 
 # Define the default arguments to use with 'lit', and an option for the user to
 # override.
 set(LIT_ARGS_DEFAULT "-sv")
 if (MSVC_IDE OR XCODE)
-  set(LIT_ARGS_DEFAULT "${LIT_ARGS_DEFAULT} --no-progress-bar")
+    set(LIT_ARGS_DEFAULT "${LIT_ARGS_DEFAULT} --no-progress-bar")
 endif()
 if(LLVM_INDIVIDUAL_TEST_COVERAGE)
-   set(LIT_ARGS_DEFAULT "${LIT_ARGS_DEFAULT} --per-test-coverage")
+    set(LIT_ARGS_DEFAULT "${LIT_ARGS_DEFAULT} --per-test-coverage")
 endif()
 set(LLVM_LIT_ARGS "${LIT_ARGS_DEFAULT}" CACHE STRING "Default options for lit")
 
 # On Win32 hosts, provide an option to specify the path to the GnuWin32 tools.
 if( WIN32 AND NOT CYGWIN )
-  set(LLVM_LIT_TOOLS_DIR "" CACHE PATH "Path to GnuWin32 tools")
+    set(LLVM_LIT_TOOLS_DIR "" CACHE PATH "Path to GnuWin32 tools")
 endif()
 set(LLVM_NATIVE_TOOL_DIR "" CACHE PATH "Path to a directory containing prebuilt matching native tools (such as llvm-tblgen)")
 
 set(LLVM_ENABLE_RPMALLOC "" CACHE BOOL "Replace the CRT allocator with rpmalloc.")
 if(LLVM_ENABLE_RPMALLOC)
-  if(NOT (CMAKE_SYSTEM_NAME MATCHES "Windows|Linux"))
-    message(FATAL_ERROR "LLVM_ENABLE_RPMALLOC is only supported on Windows and Linux.")
-  endif()
-  if(LLVM_USE_SANITIZER)
-    message(FATAL_ERROR "LLVM_ENABLE_RPMALLOC cannot be used along with LLVM_USE_SANITIZER!")
-  endif()
-  if(WIN32)
-    if(CMAKE_CONFIGURATION_TYPES)
-      foreach(BUILD_MODE ${CMAKE_CONFIGURATION_TYPES})
-        string(TOUPPER "${BUILD_MODE}" uppercase_BUILD_MODE)
-        if(uppercase_BUILD_MODE STREQUAL "DEBUG")
-          message(WARNING "The Debug target isn't supported along with LLVM_ENABLE_RPMALLOC!")
-        endif()
-      endforeach()
-    else()
-      if(CMAKE_BUILD_TYPE AND uppercase_CMAKE_BUILD_TYPE STREQUAL "DEBUG")
-        message(FATAL_ERROR "The Debug target isn't supported along with LLVM_ENABLE_RPMALLOC!")
-      endif()
+    if(NOT (CMAKE_SYSTEM_NAME MATCHES "Windows|Linux"))
+        message(FATAL_ERROR "LLVM_ENABLE_RPMALLOC is only supported on Windows and Linux.")
     endif()
-  endif()
+    if(LLVM_USE_SANITIZER)
+        message(FATAL_ERROR "LLVM_ENABLE_RPMALLOC cannot be used along with LLVM_USE_SANITIZER!")
+    endif()
+    if(WIN32)
+        if(CMAKE_CONFIGURATION_TYPES)
+            foreach(BUILD_MODE ${CMAKE_CONFIGURATION_TYPES})
+                string(TOUPPER "${BUILD_MODE}" uppercase_BUILD_MODE)
+                if(uppercase_BUILD_MODE STREQUAL "DEBUG")
+                    message(WARNING "The Debug target isn't supported along with LLVM_ENABLE_RPMALLOC!")
+                endif()
+            endforeach()
+        else()
+            if(CMAKE_BUILD_TYPE AND uppercase_CMAKE_BUILD_TYPE STREQUAL "DEBUG")
+                message(FATAL_ERROR "The Debug target isn't supported along with LLVM_ENABLE_RPMALLOC!")
+            endif()
+        endif()
+    endif()
 
-  # Override the C runtime allocator with the in-tree rpmalloc
-  set(LLVM_INTEGRATED_CRT_ALLOC "${CMAKE_CURRENT_SOURCE_DIR}/lib/Support")
-  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+    # Override the C runtime allocator with the in-tree rpmalloc
+    set(LLVM_INTEGRATED_CRT_ALLOC "${CMAKE_CURRENT_SOURCE_DIR}/lib/Support")
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
 endif()
 
 set(LLVM_INTEGRATED_CRT_ALLOC "${LLVM_INTEGRATED_CRT_ALLOC}" CACHE PATH "Replace the Windows CRT allocator with any of {rpmalloc|mimalloc|snmalloc}. Only works with CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded.")
 if(LLVM_INTEGRATED_CRT_ALLOC)
-  if(NOT WIN32)
-    message(FATAL_ERROR "LLVM_INTEGRATED_CRT_ALLOC is only supported on Windows.")
-  endif()
-  if(LLVM_USE_SANITIZER)
-    message(FATAL_ERROR "LLVM_INTEGRATED_CRT_ALLOC cannot be used along with LLVM_USE_SANITIZER!")
-  endif()
-  if(CMAKE_BUILD_TYPE AND uppercase_CMAKE_BUILD_TYPE STREQUAL "DEBUG")
-    message(FATAL_ERROR "The Debug target isn't supported along with LLVM_INTEGRATED_CRT_ALLOC!")
-  endif()
+    if(NOT WIN32)
+        message(FATAL_ERROR "LLVM_INTEGRATED_CRT_ALLOC is only supported on Windows.")
+    endif()
+    if(LLVM_USE_SANITIZER)
+        message(FATAL_ERROR "LLVM_INTEGRATED_CRT_ALLOC cannot be used along with LLVM_USE_SANITIZER!")
+    endif()
+    if(CMAKE_BUILD_TYPE AND uppercase_CMAKE_BUILD_TYPE STREQUAL "DEBUG")
+        message(FATAL_ERROR "The Debug target isn't supported along with LLVM_INTEGRATED_CRT_ALLOC!")
+    endif()
 endif()
 
 # Define options to control the inclusion and default build behavior for
@@ -966,17 +966,17 @@ option(LLVM_VERSION_PRINTER_SHOW_BUILD_CONFIG
 # shared library by setting LLVM_DYLIB_COMPONENTS to a semi-colon delimited
 # list of LLVM components. All component names handled by llvm-config are valid.
 if(NOT DEFINED LLVM_DYLIB_COMPONENTS)
-  set(LLVM_DYLIB_COMPONENTS "all" CACHE STRING
+    set(LLVM_DYLIB_COMPONENTS "all" CACHE STRING
     "Semicolon-separated list of components to include in libLLVM, or \"all\".")
 endif()
 
 if(MSVC)
-  option(LLVM_BUILD_LLVM_C_DYLIB "Build LLVM-C.dll (Windows only)" ON)
-  if (BUILD_SHARED_LIBS)
-    message(FATAL_ERROR "BUILD_SHARED_LIBS options is not supported on Windows.")
-  endif()
+    option(LLVM_BUILD_LLVM_C_DYLIB "Build LLVM-C.dll (Windows only)" ON)
+    if (BUILD_SHARED_LIBS)
+        message(FATAL_ERROR "BUILD_SHARED_LIBS options is not supported on Windows.")
+    endif()
 else()
-  option(LLVM_BUILD_LLVM_C_DYLIB "Build libllvm-c re-export library (Darwin only)" OFF)
+    option(LLVM_BUILD_LLVM_C_DYLIB "Build libllvm-c re-export library (Darwin only)" OFF)
 endif()
 
 # Used to test building the llvm shared library with explicit symbol visibility on
@@ -986,7 +986,7 @@ mark_as_advanced(LLVM_BUILD_LLVM_DYLIB_VIS)
 
 set(CAN_BUILD_LLVM_DYLIB OFF)
 if(NOT MSVC OR LLVM_BUILD_LLVM_DYLIB_VIS)
-  set(CAN_BUILD_LLVM_DYLIB ON)
+    set(CAN_BUILD_LLVM_DYLIB ON)
 endif()
 
 cmake_dependent_option(LLVM_LINK_LLVM_DYLIB "Link tools against the libllvm dynamic library" OFF
@@ -994,7 +994,7 @@ cmake_dependent_option(LLVM_LINK_LLVM_DYLIB "Link tools against the libllvm dyna
 
 set(LLVM_BUILD_LLVM_DYLIB_default OFF)
 if(LLVM_LINK_LLVM_DYLIB OR LLVM_BUILD_LLVM_C_DYLIB)
-  set(LLVM_BUILD_LLVM_DYLIB_default ON)
+    set(LLVM_BUILD_LLVM_DYLIB_default ON)
 endif()
 cmake_dependent_option(LLVM_BUILD_LLVM_DYLIB "Build libllvm dynamic library" ${LLVM_BUILD_LLVM_DYLIB_default}
                        "CAN_BUILD_LLVM_DYLIB" OFF)
@@ -1005,64 +1005,64 @@ cmake_dependent_option(LLVM_DYLIB_EXPORT_INLINES "Force inline members of classe
                        "MSVC;LLVM_BUILD_LLVM_DYLIB_VIS" OFF)
 
 if(LLVM_BUILD_LLVM_DYLIB_VIS)
-  set(LLVM_BUILD_LLVM_DYLIB ON)
+    set(LLVM_BUILD_LLVM_DYLIB ON)
 endif()
 
 if (LLVM_LINK_LLVM_DYLIB AND BUILD_SHARED_LIBS)
-  message(FATAL_ERROR "Cannot enable BUILD_SHARED_LIBS with LLVM_LINK_LLVM_DYLIB.  We recommend disabling BUILD_SHARED_LIBS.")
+    message(FATAL_ERROR "Cannot enable BUILD_SHARED_LIBS with LLVM_LINK_LLVM_DYLIB.  We recommend disabling BUILD_SHARED_LIBS.")
 endif()
 
 option(LLVM_OPTIMIZED_TABLEGEN "Force TableGen to be built with optimization" OFF)
 if(CMAKE_CROSSCOMPILING OR (LLVM_OPTIMIZED_TABLEGEN AND (LLVM_ENABLE_ASSERTIONS
   OR CMAKE_CONFIGURATION_TYPES OR LLVM_USE_SANITIZER)))
-  set(LLVM_USE_HOST_TOOLS ON)
+    set(LLVM_USE_HOST_TOOLS ON)
 endif()
 
 option(LLVM_OMIT_DAGISEL_COMMENTS "Do not add comments to DAG ISel" ON)
 if (CMAKE_BUILD_TYPE AND uppercase_CMAKE_BUILD_TYPE MATCHES "^(RELWITHDEBINFO|DEBUG)$")
-  set(LLVM_OMIT_DAGISEL_COMMENTS OFF)
+    set(LLVM_OMIT_DAGISEL_COMMENTS OFF)
 endif()
 
 if (MSVC_IDE)
-  option(LLVM_ADD_NATIVE_VISUALIZERS_TO_SOLUTION "Configure project to use Visual Studio native visualizers" TRUE)
+    option(LLVM_ADD_NATIVE_VISUALIZERS_TO_SOLUTION "Configure project to use Visual Studio native visualizers" TRUE)
 endif()
 
 if(NOT LLVM_INDIVIDUAL_TEST_COVERAGE)
-  if(LLVM_BUILD_INSTRUMENTED OR LLVM_BUILD_INSTRUMENTED_COVERAGE OR LLVM_ENABLE_IR_PGO)
-    if(NOT LLVM_PROFILE_MERGE_POOL_SIZE)
-      # A pool size of 1-2 is probably sufficient on an SSD. 3-4 should be fine
-      # for spinning disks. Anything higher may only help on slower mediums.
-      set(LLVM_PROFILE_MERGE_POOL_SIZE "4")
+    if(LLVM_BUILD_INSTRUMENTED OR LLVM_BUILD_INSTRUMENTED_COVERAGE OR LLVM_ENABLE_IR_PGO)
+        if(NOT LLVM_PROFILE_MERGE_POOL_SIZE)
+            # A pool size of 1-2 is probably sufficient on an SSD. 3-4 should be fine
+            # for spinning disks. Anything higher may only help on slower mediums.
+            set(LLVM_PROFILE_MERGE_POOL_SIZE "4")
+        endif()
+        if(NOT LLVM_PROFILE_FILE_PATTERN)
+            if(NOT LLVM_PROFILE_DATA_DIR)
+                file(TO_NATIVE_PATH "${LLVM_BINARY_DIR}/profiles" LLVM_PROFILE_DATA_DIR)
+            endif()
+            file(TO_NATIVE_PATH "${LLVM_PROFILE_DATA_DIR}/%${LLVM_PROFILE_MERGE_POOL_SIZE}m.profraw" LLVM_PROFILE_FILE_PATTERN)
+        endif()
+        if(NOT LLVM_CSPROFILE_FILE_PATTERN)
+            if(NOT LLVM_CSPROFILE_DATA_DIR)
+                file(TO_NATIVE_PATH "${LLVM_BINARY_DIR}/csprofiles" LLVM_CSPROFILE_DATA_DIR)
+            endif()
+            file(TO_NATIVE_PATH "${LLVM_CSPROFILE_DATA_DIR}/%${LLVM_PROFILE_MERGE_POOL_SIZE}m.profraw" LLVM_CSPROFILE_FILE_PATTERN)
+        endif()
     endif()
-    if(NOT LLVM_PROFILE_FILE_PATTERN)
-      if(NOT LLVM_PROFILE_DATA_DIR)
-        file(TO_NATIVE_PATH "${LLVM_BINARY_DIR}/profiles" LLVM_PROFILE_DATA_DIR)
-      endif()
-      file(TO_NATIVE_PATH "${LLVM_PROFILE_DATA_DIR}/%${LLVM_PROFILE_MERGE_POOL_SIZE}m.profraw" LLVM_PROFILE_FILE_PATTERN)
-    endif()
-    if(NOT LLVM_CSPROFILE_FILE_PATTERN)
-      if(NOT LLVM_CSPROFILE_DATA_DIR)
-        file(TO_NATIVE_PATH "${LLVM_BINARY_DIR}/csprofiles" LLVM_CSPROFILE_DATA_DIR)
-      endif()
-      file(TO_NATIVE_PATH "${LLVM_CSPROFILE_DATA_DIR}/%${LLVM_PROFILE_MERGE_POOL_SIZE}m.profraw" LLVM_CSPROFILE_FILE_PATTERN)
-    endif()
-  endif()
 endif()
 
 if (LLVM_BUILD_STATIC)
-  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static")
-  # Remove shared library suffixes from use in find_library
-  foreach (shared_lib_suffix ${CMAKE_SHARED_LIBRARY_SUFFIX} ${CMAKE_IMPORT_LIBRARY_SUFFIX})
-    list(FIND CMAKE_FIND_LIBRARY_SUFFIXES ${shared_lib_suffix} shared_lib_suffix_idx)
-    if(NOT ${shared_lib_suffix_idx} EQUAL -1)
-      list(REMOVE_AT CMAKE_FIND_LIBRARY_SUFFIXES ${shared_lib_suffix_idx})
-    endif()
-  endforeach()
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static")
+    # Remove shared library suffixes from use in find_library
+    foreach (shared_lib_suffix ${CMAKE_SHARED_LIBRARY_SUFFIX} ${CMAKE_IMPORT_LIBRARY_SUFFIX})
+        list(FIND CMAKE_FIND_LIBRARY_SUFFIXES ${shared_lib_suffix} shared_lib_suffix_idx)
+        if(NOT ${shared_lib_suffix_idx} EQUAL -1)
+            list(REMOVE_AT CMAKE_FIND_LIBRARY_SUFFIXES ${shared_lib_suffix_idx})
+        endif()
+    endforeach()
 endif()
 
 # Use libtool instead of ar if you are both on an Apple host, and targeting Apple.
 if(CMAKE_HOST_APPLE AND APPLE)
-  include(UseLibtool)
+    include(UseLibtool)
 endif()
 
 # Override the default target with an environment variable named by LLVM_TARGET_TRIPLE_ENV.
@@ -1070,9 +1070,9 @@ set(LLVM_TARGET_TRIPLE_ENV CACHE STRING "The name of environment variable to ove
 mark_as_advanced(LLVM_TARGET_TRIPLE_ENV)
 
 if(CMAKE_SYSTEM_NAME MATCHES "BSD|Linux|OS390|AIX")
-  set(LLVM_ENABLE_PER_TARGET_RUNTIME_DIR_default ON)
+    set(LLVM_ENABLE_PER_TARGET_RUNTIME_DIR_default ON)
 else()
-  set(LLVM_ENABLE_PER_TARGET_RUNTIME_DIR_default OFF)
+    set(LLVM_ENABLE_PER_TARGET_RUNTIME_DIR_default OFF)
 endif()
 set(LLVM_ENABLE_PER_TARGET_RUNTIME_DIR ${LLVM_ENABLE_PER_TARGET_RUNTIME_DIR_default} CACHE BOOL
   "Enable per-target runtimes directory")
@@ -1084,11 +1084,11 @@ set(LLVM_SPROFDATA_FILE "" CACHE FILEPATH
   "Sampling profiling data file to use when compiling in order to improve runtime performance.")
 
 if(LLVM_INCLUDE_TESTS OR LLVM_ENABLE_SPHINX)
-  # All LLVM Python files should be compatible down to this minimum version.
-  set(LLVM_MINIMUM_PYTHON_VERSION 3.8)
+    # All LLVM Python files should be compatible down to this minimum version.
+    set(LLVM_MINIMUM_PYTHON_VERSION 3.8)
 else()
-  # FIXME: it is unknown if this is the actual minimum bound
-  set(LLVM_MINIMUM_PYTHON_VERSION 3.0)
+    # FIXME: it is unknown if this is the actual minimum bound
+    set(LLVM_MINIMUM_PYTHON_VERSION 3.0)
 endif()
 
 # Find python before including config-ix, since it needs to be able to search
@@ -1105,12 +1105,12 @@ include(config-ix)
 # invocation time. Except on 64-bit AIX, where the system toolchain
 # expect 32-bit objects by default.
 if("${LLVM_HOST_TRIPLE}" MATCHES "^powerpc64-ibm-aix")
-  string(REGEX REPLACE "^powerpc64" "powerpc" LLVM_DEFAULT_TARGET_TRIPLE_DEFAULT "${LLVM_HOST_TRIPLE}")
+    string(REGEX REPLACE "^powerpc64" "powerpc" LLVM_DEFAULT_TARGET_TRIPLE_DEFAULT "${LLVM_HOST_TRIPLE}")
 else()
-  # Only set default triple when native target is enabled.
-  if (LLVM_NATIVE_TARGET)
-    set(LLVM_DEFAULT_TARGET_TRIPLE_DEFAULT "${LLVM_HOST_TRIPLE}")
-  endif()
+    # Only set default triple when native target is enabled.
+    if (LLVM_NATIVE_TARGET)
+        set(LLVM_DEFAULT_TARGET_TRIPLE_DEFAULT "${LLVM_HOST_TRIPLE}")
+    endif()
 endif()
 
 set(LLVM_DEFAULT_TARGET_TRIPLE "${LLVM_DEFAULT_TARGET_TRIPLE_DEFAULT}" CACHE STRING
@@ -1120,21 +1120,21 @@ message(STATUS "LLVM default target triple: ${LLVM_DEFAULT_TARGET_TRIPLE}")
 set(LLVM_TARGET_TRIPLE "${LLVM_DEFAULT_TARGET_TRIPLE}")
 
 if(WIN32 OR CYGWIN)
-  if(BUILD_SHARED_LIBS OR LLVM_BUILD_LLVM_DYLIB)
-    set(LLVM_ENABLE_PLUGINS_default ON)
-  else()
-    set(LLVM_ENABLE_PLUGINS_default OFF)
-  endif()
+    if(BUILD_SHARED_LIBS OR LLVM_BUILD_LLVM_DYLIB)
+        set(LLVM_ENABLE_PLUGINS_default ON)
+    else()
+        set(LLVM_ENABLE_PLUGINS_default OFF)
+    endif()
 else()
-  set(LLVM_ENABLE_PLUGINS_default ${LLVM_ENABLE_PIC})
+    set(LLVM_ENABLE_PLUGINS_default ${LLVM_ENABLE_PIC})
 endif()
 option(LLVM_ENABLE_PLUGINS "Enable plugin support" ${LLVM_ENABLE_PLUGINS_default})
 
 set(LLVM_ENABLE_LLVM_EXPORT_ANNOTATIONS OFF)
 if (LLVM_BUILD_LLVM_DYLIB OR LLVM_BUILD_SHARED_LIBS OR LLVM_ENABLE_PLUGINS)
-  # Export annotations for LLVM must be enabled if building as a shared lib or
-  # enabling plugins.
-  set(LLVM_ENABLE_LLVM_EXPORT_ANNOTATIONS ON)
+    # Export annotations for LLVM must be enabled if building as a shared lib or
+    # enabling plugins.
+    set(LLVM_ENABLE_LLVM_EXPORT_ANNOTATIONS ON)
 endif()
 
 # Because LLVM-C is built into the LLVM library, for now export its symbols
@@ -1144,7 +1144,7 @@ set(LLVM_ENABLE_LLVM_C_EXPORT_ANNOTATIONS ${LLVM_ENABLE_LLVM_EXPORT_ANNOTATIONS}
 set(LLVM_ENABLE_NEW_PASS_MANAGER TRUE CACHE BOOL
   "Enable the new pass manager by default.")
 if(NOT LLVM_ENABLE_NEW_PASS_MANAGER)
-  message(FATAL_ERROR "Enabling the legacy pass manager on the cmake level is"
+    message(FATAL_ERROR "Enabling the legacy pass manager on the cmake level is"
                       " no longer supported.")
 endif()
 
@@ -1161,50 +1161,50 @@ set(LLVM_ENUM_DISASSEMBLERS "")
 set(LLVM_ENUM_TARGETMCAS "")
 set(LLVM_ENUM_EXEGESIS "")
 foreach(t ${LLVM_TARGETS_TO_BUILD})
-  set( td ${LLVM_MAIN_SRC_DIR}/lib/Target/${t} )
+    set( td ${LLVM_MAIN_SRC_DIR}/lib/Target/${t} )
 
-  # Make sure that any experimental targets were passed via
-  # LLVM_EXPERIMENTAL_TARGETS_TO_BUILD, not LLVM_TARGETS_TO_BUILD.
-  # We allow experimental targets that are not in LLVM_ALL_EXPERIMENTAL_TARGETS,
-  # as long as they are passed via LLVM_EXPERIMENTAL_TARGETS_TO_BUILD.
-  if ( NOT "${t}" IN_LIST LLVM_ALL_TARGETS AND NOT "${t}" IN_LIST LLVM_EXPERIMENTAL_TARGETS_TO_BUILD )
-    if( "${t}" IN_LIST LLVM_ALL_EXPERIMENTAL_TARGETS )
-      message(FATAL_ERROR "The target `${t}' is experimental and must be passed "
+    # Make sure that any experimental targets were passed via
+    # LLVM_EXPERIMENTAL_TARGETS_TO_BUILD, not LLVM_TARGETS_TO_BUILD.
+    # We allow experimental targets that are not in LLVM_ALL_EXPERIMENTAL_TARGETS,
+    # as long as they are passed via LLVM_EXPERIMENTAL_TARGETS_TO_BUILD.
+    if ( NOT "${t}" IN_LIST LLVM_ALL_TARGETS AND NOT "${t}" IN_LIST LLVM_EXPERIMENTAL_TARGETS_TO_BUILD )
+        if( "${t}" IN_LIST LLVM_ALL_EXPERIMENTAL_TARGETS )
+            message(FATAL_ERROR "The target `${t}' is experimental and must be passed "
         "via LLVM_EXPERIMENTAL_TARGETS_TO_BUILD.")
-    else()
-      message(FATAL_ERROR "The target `${t}' is not a core tier target. It may be "
+        else()
+            message(FATAL_ERROR "The target `${t}' is not a core tier target. It may be "
         "experimental, if so it must be passed via "
         "LLVM_EXPERIMENTAL_TARGETS_TO_BUILD.\n"
         "Core tier targets: ${LLVM_ALL_TARGETS}\n"
         "Known experimental targets: ${LLVM_ALL_EXPERIMENTAL_TARGETS}")
+        endif()
+    else()
+        set(LLVM_ENUM_TARGETS "${LLVM_ENUM_TARGETS}LLVM_TARGET(${t})\n")
+        string(TOUPPER ${t} T_UPPER)
+        set(LLVM_HAS_${T_UPPER}_TARGET 1)
     endif()
-  else()
-    set(LLVM_ENUM_TARGETS "${LLVM_ENUM_TARGETS}LLVM_TARGET(${t})\n")
-    string(TOUPPER ${t} T_UPPER)
-    set(LLVM_HAS_${T_UPPER}_TARGET 1)
-  endif()
 
-  file(GLOB asmp_file "${td}/*AsmPrinter.cpp")
-  if( asmp_file )
-    set(LLVM_ENUM_ASM_PRINTERS
+    file(GLOB asmp_file "${td}/*AsmPrinter.cpp")
+    if( asmp_file )
+        set(LLVM_ENUM_ASM_PRINTERS
       "${LLVM_ENUM_ASM_PRINTERS}LLVM_ASM_PRINTER(${t})\n")
-  endif()
-  if( EXISTS ${td}/AsmParser/CMakeLists.txt )
-    set(LLVM_ENUM_ASM_PARSERS
+    endif()
+    if( EXISTS ${td}/AsmParser/CMakeLists.txt )
+        set(LLVM_ENUM_ASM_PARSERS
       "${LLVM_ENUM_ASM_PARSERS}LLVM_ASM_PARSER(${t})\n")
-  endif()
-  if( EXISTS ${td}/Disassembler/CMakeLists.txt )
-    set(LLVM_ENUM_DISASSEMBLERS
+    endif()
+    if( EXISTS ${td}/Disassembler/CMakeLists.txt )
+        set(LLVM_ENUM_DISASSEMBLERS
       "${LLVM_ENUM_DISASSEMBLERS}LLVM_DISASSEMBLER(${t})\n")
-  endif()
-  if( EXISTS ${td}/MCA/CMakeLists.txt )
-    set(LLVM_ENUM_TARGETMCAS
+    endif()
+    if( EXISTS ${td}/MCA/CMakeLists.txt )
+        set(LLVM_ENUM_TARGETMCAS
       "${LLVM_ENUM_TARGETMCAS}LLVM_TARGETMCA(${t})\n")
-  endif()
-  if( EXISTS ${LLVM_MAIN_SRC_DIR}/tools/llvm-exegesis/lib/${t}/CMakeLists.txt )
-    set(LLVM_ENUM_EXEGESIS
+    endif()
+    if( EXISTS ${LLVM_MAIN_SRC_DIR}/tools/llvm-exegesis/lib/${t}/CMakeLists.txt )
+        set(LLVM_ENUM_EXEGESIS
       "${LLVM_ENUM_EXEGESIS}LLVM_EXEGESIS(${t})\n")
-  endif()
+    endif()
 endforeach(t)
 
 # Provide an LLVM_ namespaced alias for use in #cmakedefine.
@@ -1246,7 +1246,7 @@ set( CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${LLVM_LIBRARY_DIR} )
 # the bot setup script: https://github.com/google/ml-compiler-opt/blob/main/buildbot/buildbot_init.sh
 set(LLVM_HAVE_TFLITE "" CACHE BOOL "Use tflite")
 if (LLVM_HAVE_TFLITE)
-  find_package(tensorflow-lite REQUIRED)
+    find_package(tensorflow-lite REQUIRED)
 endif()
 
 set(LLVM_ENABLE_PROFCHECK OFF CACHE BOOL "Enable profile checking in test tools")
@@ -1260,35 +1260,35 @@ set(LLVM_ENABLE_PROFCHECK OFF CACHE BOOL "Enable profile checking in test tools"
 set(TENSORFLOW_AOT_PATH "" CACHE PATH "Path to TensorFlow pip install dir")
 
 if (NOT TENSORFLOW_AOT_PATH STREQUAL "")
-  set(LLVM_HAVE_TF_AOT "ON" CACHE BOOL "Tensorflow AOT available")
-  set(TENSORFLOW_AOT_COMPILER
+    set(LLVM_HAVE_TF_AOT "ON" CACHE BOOL "Tensorflow AOT available")
+    set(TENSORFLOW_AOT_COMPILER
     "${TENSORFLOW_AOT_PATH}/../../../../bin/saved_model_cli"
     CACHE PATH "Path to the Tensorflow AOT compiler")
-  include_directories(${TENSORFLOW_AOT_PATH}/include)
-  add_subdirectory(${TENSORFLOW_AOT_PATH}/xla_aot_runtime_src
+    include_directories(${TENSORFLOW_AOT_PATH}/include)
+    add_subdirectory(${TENSORFLOW_AOT_PATH}/xla_aot_runtime_src
     ${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}/tf_runtime)
-  install(TARGETS tf_xla_runtime EXPORT LLVMExports
+    install(TARGETS tf_xla_runtime EXPORT LLVMExports
     ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX} COMPONENT tf_xla_runtime)
-  install(TARGETS tf_xla_runtime EXPORT LLVMDevelopmentExports
+    install(TARGETS tf_xla_runtime EXPORT LLVMDevelopmentExports
     ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX} COMPONENT tf_xla_runtime)
-  set_property(GLOBAL APPEND PROPERTY LLVM_EXPORTS tf_xla_runtime)
-  # Once we add more modules, we should handle this more automatically.
-  if (DEFINED LLVM_OVERRIDE_MODEL_HEADER_INLINERSIZEMODEL)
-    set(LLVM_INLINER_MODEL_PATH "none")
-  elseif(NOT DEFINED LLVM_INLINER_MODEL_PATH
+    set_property(GLOBAL APPEND PROPERTY LLVM_EXPORTS tf_xla_runtime)
+    # Once we add more modules, we should handle this more automatically.
+    if (DEFINED LLVM_OVERRIDE_MODEL_HEADER_INLINERSIZEMODEL)
+        set(LLVM_INLINER_MODEL_PATH "none")
+    elseif(NOT DEFINED LLVM_INLINER_MODEL_PATH
       OR "${LLVM_INLINER_MODEL_PATH}" STREQUAL ""
       OR "${LLVM_INLINER_MODEL_PATH}" STREQUAL "autogenerate")
-    set(LLVM_INLINER_MODEL_PATH "autogenerate")
-    set(LLVM_INLINER_MODEL_AUTOGENERATED 1)
-  endif()
-  if (DEFINED LLVM_OVERRIDE_MODEL_HEADER_REGALLOCEVICTMODEL)
-    set(LLVM_RAEVICT_MODEL_PATH "none")
-  elseif(NOT DEFINED LLVM_RAEVICT_MODEL_PATH
+        set(LLVM_INLINER_MODEL_PATH "autogenerate")
+        set(LLVM_INLINER_MODEL_AUTOGENERATED 1)
+    endif()
+    if (DEFINED LLVM_OVERRIDE_MODEL_HEADER_REGALLOCEVICTMODEL)
+        set(LLVM_RAEVICT_MODEL_PATH "none")
+    elseif(NOT DEFINED LLVM_RAEVICT_MODEL_PATH
       OR "${LLVM_RAEVICT_MODEL_PATH}" STREQUAL ""
       OR "${LLVM_RAEVICT_MODEL_PATH}" STREQUAL "autogenerate")
-    set(LLVM_RAEVICT_MODEL_PATH "autogenerate")
-    set(LLVM_RAEVICT_MODEL_AUTOGENERATED 1)
-  endif()
+        set(LLVM_RAEVICT_MODEL_PATH "autogenerate")
+        set(LLVM_RAEVICT_MODEL_AUTOGENERATED 1)
+    endif()
 
 endif()
 
@@ -1307,46 +1307,46 @@ configure_file(
   ${LLVM_INCLUDE_DIR}/llvm/Config/abi-breaking.h)
 
 if(APPLE AND DARWIN_LTO_LIBRARY)
-  set(CMAKE_EXE_LINKER_FLAGS
+    set(CMAKE_EXE_LINKER_FLAGS
     "${CMAKE_EXE_LINKER_FLAGS} -Wl,-lto_library -Wl,${DARWIN_LTO_LIBRARY}")
-  set(CMAKE_SHARED_LINKER_FLAGS
+    set(CMAKE_SHARED_LINKER_FLAGS
     "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-lto_library -Wl,${DARWIN_LTO_LIBRARY}")
-  set(CMAKE_MODULE_LINKER_FLAGS
+    set(CMAKE_MODULE_LINKER_FLAGS
     "${CMAKE_MODULE_LINKER_FLAGS} -Wl,-lto_library -Wl,${DARWIN_LTO_LIBRARY}")
 endif()
 
 # Build with _XOPEN_SOURCE on AIX, as stray macros in _ALL_SOURCE mode tend to
 # break things. In this case we need to enable the large-file API as well.
 if (UNIX AND "${CMAKE_SYSTEM_NAME}" MATCHES "AIX")
-          add_compile_definitions(_XOPEN_SOURCE=700)
-          add_compile_definitions(_LARGE_FILE_API)
-          add_compile_options(-pthread)
+    add_compile_definitions(_XOPEN_SOURCE=700)
+    add_compile_definitions(_LARGE_FILE_API)
+    add_compile_options(-pthread)
 
-  # Modules should be built with -shared -Wl,-G, so we can use runtime linking
-  # with plugins.
-  string(APPEND CMAKE_MODULE_LINKER_FLAGS " -shared -Wl,-G")
+    # Modules should be built with -shared -Wl,-G, so we can use runtime linking
+    # with plugins.
+    string(APPEND CMAKE_MODULE_LINKER_FLAGS " -shared -Wl,-G")
 
-  # Also set the correct flags for building shared libraries.
-  string(APPEND CMAKE_SHARED_LINKER_FLAGS " -shared")
+    # Also set the correct flags for building shared libraries.
+    string(APPEND CMAKE_SHARED_LINKER_FLAGS " -shared")
 endif()
 
 # Build with _XOPEN_SOURCE on z/OS.
 if (CMAKE_SYSTEM_NAME MATCHES "OS390")
-  add_compile_definitions(_XOPEN_SOURCE=600)
-  add_compile_definitions(_XPLATFORM_SOURCE) # Needed e.g. for O_CLOEXEC.
-  add_compile_definitions(_OPEN_SYS) # Needed for process information.
-  add_compile_definitions(_OPEN_SYS_FILE_EXT) # Needed for EBCDIC I/O.
-  add_compile_definitions(_EXT) # Needed for file data.
-  # Need to build LLVM as ASCII application.
-  # This can't be a global setting because other projects may
-  # need to be built in EBCDIC mode.
-  append("-fzos-le-char-mode=ascii" CMAKE_CXX_FLAGS CMAKE_C_FLAGS)
-  append("-m64" CMAKE_CXX_FLAGS CMAKE_C_FLAGS)
+    add_compile_definitions(_XOPEN_SOURCE=600)
+    add_compile_definitions(_XPLATFORM_SOURCE) # Needed e.g. for O_CLOEXEC.
+    add_compile_definitions(_OPEN_SYS) # Needed for process information.
+    add_compile_definitions(_OPEN_SYS_FILE_EXT) # Needed for EBCDIC I/O.
+    add_compile_definitions(_EXT) # Needed for file data.
+    # Need to build LLVM as ASCII application.
+    # This can't be a global setting because other projects may
+    # need to be built in EBCDIC mode.
+    append("-fzos-le-char-mode=ascii" CMAKE_CXX_FLAGS CMAKE_C_FLAGS)
+    append("-m64" CMAKE_CXX_FLAGS CMAKE_C_FLAGS)
 endif()
 
 # Build with _FILE_OFFSET_BITS=64 on Solaris to match g++ >= 9.
 if (UNIX AND "${CMAKE_SYSTEM_NAME}" MATCHES "SunOS")
-          add_compile_definitions(_FILE_OFFSET_BITS=64)
+    add_compile_definitions(_FILE_OFFSET_BITS=64)
 endif()
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -1355,22 +1355,22 @@ include_directories( ${LLVM_INCLUDE_DIR} ${LLVM_MAIN_INCLUDE_DIR})
 
 # when crosscompiling import the executable targets from a file
 if(LLVM_USE_HOST_TOOLS)
-  include(CrossCompile)
-  llvm_create_cross_target(LLVM NATIVE "" Release)
+    include(CrossCompile)
+    llvm_create_cross_target(LLVM NATIVE "" Release)
 endif(LLVM_USE_HOST_TOOLS)
 if(LLVM_TARGET_IS_CROSSCOMPILE_HOST)
-# Dummy use to avoid CMake Warning: Manually-specified variables were not used
-# (this is a variable that CrossCompile sets on recursive invocations)
+    # Dummy use to avoid CMake Warning: Manually-specified variables were not used
+    # (this is a variable that CrossCompile sets on recursive invocations)
 endif()
 
 # Special hack for z/OS for missing POSIX functions
 if (CMAKE_SYSTEM_NAME MATCHES "OS390")
-  include_directories(SYSTEM "${LLVM_MAIN_INCLUDE_DIR}/llvm/Support/SystemZ/zos_wrappers" )
+    include_directories(SYSTEM "${LLVM_MAIN_INCLUDE_DIR}/llvm/Support/SystemZ/zos_wrappers" )
 endif()
 
 if( "${CMAKE_SYSTEM_NAME}" MATCHES SunOS )
-   # special hack for Solaris to handle crazy system sys/regset.h
-   include_directories("${LLVM_MAIN_INCLUDE_DIR}/llvm/Support/Solaris")
+    # special hack for Solaris to handle crazy system sys/regset.h
+    include_directories("${LLVM_MAIN_INCLUDE_DIR}/llvm/Support/Solaris")
 endif( "${CMAKE_SYSTEM_NAME}" MATCHES SunOS )
 
 # Make sure we don't get -rdynamic in every binary. For those that need it,
@@ -1383,13 +1383,13 @@ include(TableGen)
 include(LLVMDistributionSupport)
 
 if( MINGW AND NOT "${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang" )
-  # People report that -O3 is unreliable on MinGW. The traditional
-  # build also uses -O2 for that reason:
-  llvm_replace_compiler_option(CMAKE_CXX_FLAGS_RELEASE "-O3" "-O2")
+    # People report that -O3 is unreliable on MinGW. The traditional
+    # build also uses -O2 for that reason:
+    llvm_replace_compiler_option(CMAKE_CXX_FLAGS_RELEASE "-O3" "-O2")
 endif()
 
 if(LLVM_INCLUDE_TESTS)
-  umbrella_lit_testsuite_begin(check-all)
+    umbrella_lit_testsuite_begin(check-all)
 endif()
 
 # Put this before tblgen. Else we have a circular dependence.
@@ -1404,102 +1404,102 @@ add_subdirectory(include)
 add_subdirectory(lib)
 
 if( LLVM_INCLUDE_UTILS )
-  add_subdirectory(utils/FileCheck)
-  add_subdirectory(utils/PerfectShuffle)
-  add_subdirectory(utils/count)
-  add_subdirectory(utils/not)
-  add_subdirectory(utils/UnicodeData)
-  add_subdirectory(utils/yaml-bench)
-  add_subdirectory(utils/split-file)
-  add_subdirectory(utils/mlgo-utils)
-  add_subdirectory(utils/llvm-test-mustache-spec)
-  if( LLVM_INCLUDE_TESTS )
-    add_subdirectory(${LLVM_THIRD_PARTY_DIR}/unittest ${CMAKE_CURRENT_BINARY_DIR}/third-party/unittest)
-  endif()
+    add_subdirectory(utils/FileCheck)
+    add_subdirectory(utils/PerfectShuffle)
+    add_subdirectory(utils/count)
+    add_subdirectory(utils/not)
+    add_subdirectory(utils/UnicodeData)
+    add_subdirectory(utils/yaml-bench)
+    add_subdirectory(utils/split-file)
+    add_subdirectory(utils/mlgo-utils)
+    add_subdirectory(utils/llvm-test-mustache-spec)
+    if( LLVM_INCLUDE_TESTS )
+        add_subdirectory(${LLVM_THIRD_PARTY_DIR}/unittest ${CMAKE_CURRENT_BINARY_DIR}/third-party/unittest)
+    endif()
 else()
-  if ( LLVM_INCLUDE_TESTS )
-    message(FATAL_ERROR "Including tests when not building utils will not work.
+    if ( LLVM_INCLUDE_TESTS )
+        message(FATAL_ERROR "Including tests when not building utils will not work.
     Either set LLVM_INCLUDE_UTILS to On, or set LLVM_INCLUDE_TESTS to Off.")
-  endif()
+    endif()
 endif()
 
 # Use LLVM_ADD_NATIVE_VISUALIZERS_TO_SOLUTION instead of LLVM_INCLUDE_UTILS because it is not really a util
 if (LLVM_ADD_NATIVE_VISUALIZERS_TO_SOLUTION)
-  add_subdirectory(utils/LLVMVisualizers)
+    add_subdirectory(utils/LLVMVisualizers)
 endif()
 
 foreach( binding ${LLVM_BINDINGS_LIST} )
-  if( EXISTS "${LLVM_MAIN_SRC_DIR}/bindings/${binding}/CMakeLists.txt" )
-    add_subdirectory(bindings/${binding})
-  endif()
+    if( EXISTS "${LLVM_MAIN_SRC_DIR}/bindings/${binding}/CMakeLists.txt" )
+        add_subdirectory(bindings/${binding})
+    endif()
 endforeach()
 
 add_subdirectory(projects)
 
 if( LLVM_INCLUDE_TOOLS )
-  add_subdirectory(tools)
+    add_subdirectory(tools)
 endif()
 
 # We need to setup KillTheDoctor before setting up the runtimes build because
 # the runtimes build needs to add a KillTheDoctor dep for compiler-rt on
 # Windows.
 if (LLVM_INCLUDE_TESTS)
-  if (WIN32)
-    # This utility is used to prevent crashing tests from calling Dr. Watson on
-    # Windows.
-    add_subdirectory(utils/KillTheDoctor)
-  endif()
+    if (WIN32)
+        # This utility is used to prevent crashing tests from calling Dr. Watson on
+        # Windows.
+        add_subdirectory(utils/KillTheDoctor)
+    endif()
 endif()
 
 if( LLVM_INCLUDE_RUNTIMES )
-  add_subdirectory(runtimes)
+    add_subdirectory(runtimes)
 endif()
 
 if( LLVM_INCLUDE_EXAMPLES )
-  add_subdirectory(examples)
+    add_subdirectory(examples)
 endif()
 
 if( LLVM_INCLUDE_TESTS )
-  set(LLVM_GTEST_RUN_UNDER
+    set(LLVM_GTEST_RUN_UNDER
     "" CACHE STRING
     "Define the wrapper program that LLVM unit tests should be run under.")
-  if(EXISTS ${LLVM_MAIN_SRC_DIR}/projects/test-suite AND TARGET clang)
-    include(LLVMExternalProjectUtils)
-    llvm_ExternalProject_Add(test-suite ${LLVM_MAIN_SRC_DIR}/projects/test-suite
+    if(EXISTS ${LLVM_MAIN_SRC_DIR}/projects/test-suite AND TARGET clang)
+        include(LLVMExternalProjectUtils)
+        llvm_ExternalProject_Add(test-suite ${LLVM_MAIN_SRC_DIR}/projects/test-suite
       USE_TOOLCHAIN
       EXCLUDE_FROM_ALL
       NO_INSTALL
       ALWAYS_CLEAN)
-  endif()
-  add_subdirectory(utils/lit)
-  add_subdirectory(test)
-  add_subdirectory(unittests)
+    endif()
+    add_subdirectory(utils/lit)
+    add_subdirectory(test)
+    add_subdirectory(unittests)
 
-  umbrella_lit_testsuite_end(check-all)
-  get_property(LLVM_ALL_LIT_DEPENDS GLOBAL PROPERTY LLVM_ALL_LIT_DEPENDS)
-  get_property(LLVM_ALL_ADDITIONAL_TEST_DEPENDS
+    umbrella_lit_testsuite_end(check-all)
+    get_property(LLVM_ALL_LIT_DEPENDS GLOBAL PROPERTY LLVM_ALL_LIT_DEPENDS)
+    get_property(LLVM_ALL_ADDITIONAL_TEST_DEPENDS
       GLOBAL PROPERTY LLVM_ALL_ADDITIONAL_TEST_DEPENDS)
-  add_custom_target(test-depends)
-  if(LLVM_ALL_LIT_DEPENDS OR LLVM_ALL_ADDITIONAL_TEST_DEPENDS)
-    add_dependencies(test-depends ${LLVM_ALL_LIT_DEPENDS} ${LLVM_ALL_ADDITIONAL_TEST_DEPENDS})
-  endif()
-  set_target_properties(test-depends PROPERTIES FOLDER "LLVM/Tests")
-  add_dependencies(check-all test-depends)
+    add_custom_target(test-depends)
+    if(LLVM_ALL_LIT_DEPENDS OR LLVM_ALL_ADDITIONAL_TEST_DEPENDS)
+        add_dependencies(test-depends ${LLVM_ALL_LIT_DEPENDS} ${LLVM_ALL_ADDITIONAL_TEST_DEPENDS})
+    endif()
+    set_target_properties(test-depends PROPERTIES FOLDER "LLVM/Tests")
+    add_dependencies(check-all test-depends)
 endif()
 
 if (LLVM_INCLUDE_DOCS)
-  add_subdirectory(docs)
+    add_subdirectory(docs)
 endif()
 
 add_subdirectory(cmake/modules)
 
 # Do this last so that all lit targets have already been created.
 if (LLVM_INCLUDE_UTILS)
-  add_subdirectory(utils/llvm-lit)
+    add_subdirectory(utils/llvm-lit)
 endif()
 
 if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
-  install(DIRECTORY include/llvm include/llvm-c
+    install(DIRECTORY include/llvm include/llvm-c
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
     COMPONENT llvm-headers
     FILES_MATCHING
@@ -1510,7 +1510,7 @@ if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
     PATTERN "LICENSE.TXT"
     )
 
-  install(DIRECTORY ${LLVM_INCLUDE_DIR}/llvm ${LLVM_INCLUDE_DIR}/llvm-c
+    install(DIRECTORY ${LLVM_INCLUDE_DIR}/llvm ${LLVM_INCLUDE_DIR}/llvm-c
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
     COMPONENT llvm-headers
     FILES_MATCHING
@@ -1523,53 +1523,53 @@ if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
     PATTERN "config.h" EXCLUDE
     )
 
-  if (LLVM_INSTALL_MODULEMAPS)
-    install(DIRECTORY include
+    if (LLVM_INSTALL_MODULEMAPS)
+        install(DIRECTORY include
             DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
             COMPONENT llvm-headers
             FILES_MATCHING
             PATTERN "module.modulemap"
             )
-    install(FILES include/module.install.modulemap
+        install(FILES include/module.install.modulemap
             DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
             COMPONENT llvm-headers
             RENAME "module.extern.modulemap"
             )
-  endif(LLVM_INSTALL_MODULEMAPS)
+    endif(LLVM_INSTALL_MODULEMAPS)
 
-  # Installing the headers needs to depend on generating any public
-  # tablegen'd headers.
-  add_custom_target(llvm-headers)
-  add_dependencies(llvm-headers intrinsics_gen omp_gen target_parser_gen)
-  set_target_properties(llvm-headers PROPERTIES FOLDER "LLVM/Resources")
+    # Installing the headers needs to depend on generating any public
+    # tablegen'd headers.
+    add_custom_target(llvm-headers)
+    add_dependencies(llvm-headers intrinsics_gen omp_gen target_parser_gen)
+    set_target_properties(llvm-headers PROPERTIES FOLDER "LLVM/Resources")
 
-  if (NOT LLVM_ENABLE_IDE)
-    add_llvm_install_targets(install-llvm-headers
+    if (NOT LLVM_ENABLE_IDE)
+        add_llvm_install_targets(install-llvm-headers
                              DEPENDS llvm-headers
                              COMPONENT llvm-headers)
-  endif()
+    endif()
 
-  # Custom target to install all libraries.
-  add_custom_target(llvm-libraries)
-  set_target_properties(llvm-libraries PROPERTIES FOLDER "LLVM/Resources")
+    # Custom target to install all libraries.
+    add_custom_target(llvm-libraries)
+    set_target_properties(llvm-libraries PROPERTIES FOLDER "LLVM/Resources")
 
-  if (NOT LLVM_ENABLE_IDE)
-    add_llvm_install_targets(install-llvm-libraries
+    if (NOT LLVM_ENABLE_IDE)
+        add_llvm_install_targets(install-llvm-libraries
                              DEPENDS llvm-libraries
                              COMPONENT llvm-libraries)
-  endif()
+    endif()
 
-  get_property(LLVM_LIBS GLOBAL PROPERTY LLVM_LIBS)
-  if(LLVM_LIBS)
-    list(REMOVE_DUPLICATES LLVM_LIBS)
-    foreach(lib ${LLVM_LIBS})
-      add_dependencies(llvm-libraries ${lib})
-      if (NOT LLVM_ENABLE_IDE)
-        add_dependencies(install-llvm-libraries install-${lib})
-        add_dependencies(install-llvm-libraries-stripped install-${lib}-stripped)
-      endif()
-    endforeach()
-  endif()
+    get_property(LLVM_LIBS GLOBAL PROPERTY LLVM_LIBS)
+    if(LLVM_LIBS)
+        list(REMOVE_DUPLICATES LLVM_LIBS)
+        foreach(lib ${LLVM_LIBS})
+            add_dependencies(llvm-libraries ${lib})
+            if (NOT LLVM_ENABLE_IDE)
+                add_dependencies(install-llvm-libraries install-${lib})
+                add_dependencies(install-llvm-libraries-stripped install-${lib}-stripped)
+            endif()
+        endforeach()
+    endif()
 endif()
 
 # This must be at the end of the LLVM root CMakeLists file because it must run
@@ -1580,41 +1580,41 @@ include(CoverageReport)
 
 # This allows us to deploy the Universal CRT DLLs by passing -DCMAKE_INSTALL_UCRT_LIBRARIES=ON to CMake
 if (MSVC AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows" AND CMAKE_INSTALL_UCRT_LIBRARIES)
-  include(InstallRequiredSystemLibraries)
+    include(InstallRequiredSystemLibraries)
 endif()
 
 if (LLVM_INCLUDE_BENCHMARKS)
-  # Override benchmark defaults so that when the library itself is updated these
-  # modifications are not lost.
-  set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "Disable benchmark testing" FORCE)
-  set(BENCHMARK_ENABLE_EXCEPTIONS OFF CACHE BOOL "Disable benchmark exceptions" FORCE)
-  set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "Don't install benchmark" FORCE)
-  set(BENCHMARK_DOWNLOAD_DEPENDENCIES OFF CACHE BOOL "Don't download dependencies" FORCE)
-  set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "Disable Google Test in benchmark" FORCE)
-  set(BENCHMARK_ENABLE_WERROR ${LLVM_ENABLE_WERROR} CACHE BOOL
+    # Override benchmark defaults so that when the library itself is updated these
+    # modifications are not lost.
+    set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "Disable benchmark testing" FORCE)
+    set(BENCHMARK_ENABLE_EXCEPTIONS OFF CACHE BOOL "Disable benchmark exceptions" FORCE)
+    set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "Don't install benchmark" FORCE)
+    set(BENCHMARK_DOWNLOAD_DEPENDENCIES OFF CACHE BOOL "Don't download dependencies" FORCE)
+    set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "Disable Google Test in benchmark" FORCE)
+    set(BENCHMARK_ENABLE_WERROR ${LLVM_ENABLE_WERROR} CACHE BOOL
     "Handle -Werror for Google Benchmark based on LLVM_ENABLE_WERROR" FORCE)
-  # Since LLVM requires C++11 it is safe to assume that std::regex is available.
-  set(HAVE_STD_REGEX ON CACHE BOOL "OK" FORCE)
-  add_subdirectory(${LLVM_THIRD_PARTY_DIR}/benchmark
+    # Since LLVM requires C++11 it is safe to assume that std::regex is available.
+    set(HAVE_STD_REGEX ON CACHE BOOL "OK" FORCE)
+    add_subdirectory(${LLVM_THIRD_PARTY_DIR}/benchmark
     ${CMAKE_CURRENT_BINARY_DIR}/third-party/benchmark)
-  set_target_properties(benchmark PROPERTIES FOLDER "Third-Party/Google Benchmark")
-  set_target_properties(benchmark_main PROPERTIES FOLDER "Third-Party/Google Benchmark")
-  add_subdirectory(benchmarks)
+    set_target_properties(benchmark PROPERTIES FOLDER "Third-Party/Google Benchmark")
+    set_target_properties(benchmark_main PROPERTIES FOLDER "Third-Party/Google Benchmark")
+    add_subdirectory(benchmarks)
 endif()
 
 if (LLVM_INCLUDE_UTILS AND LLVM_INCLUDE_TOOLS)
-  add_subdirectory(utils/llvm-locstats)
+    add_subdirectory(utils/llvm-locstats)
 endif()
 
 if (XCODE)
-  # For additional targets that you would like to add schemes, specify e.g:
-  #
-  #   -DLLVM_XCODE_EXTRA_TARGET_SCHEMES="TargetParserTests;SupportTests"
-  #
-  # at CMake configure time.
-  set(LLVM_XCODE_EXTRA_TARGET_SCHEMES "" CACHE STRING "Specifies an extra list of targets to turn into schemes")
+    # For additional targets that you would like to add schemes, specify e.g:
+    #
+    #   -DLLVM_XCODE_EXTRA_TARGET_SCHEMES="TargetParserTests;SupportTests"
+    #
+    # at CMake configure time.
+    set(LLVM_XCODE_EXTRA_TARGET_SCHEMES "" CACHE STRING "Specifies an extra list of targets to turn into schemes")
 
-  foreach(target ${LLVM_XCODE_EXTRA_TARGET_SCHEMES})
-    set_target_properties(${target} PROPERTIES XCODE_GENERATE_SCHEME ON)
-  endforeach()
+    foreach(target ${LLVM_XCODE_EXTRA_TARGET_SCHEMES})
+        set_target_properties(${target} PROPERTIES XCODE_GENERATE_SCHEME ON)
+    endforeach()
 endif()

@@ -1,0 +1,14 @@
+[common]
+c++_sources = SquallMCAsmInfo.cpp \
+              SquallInstPrinter.cpp \
+              SquallMCCodeEmitter.cpp \
+              SquallAsmBackend.cpp \
+              SquallELFObjectWriter.cpp \
+              SquallMCTargetDesc.cpp
+
+[common]
+tablegen = 1
+tablegen_sources = Squall.td
+
+[common]
+tablegen_backends = -gen-register-info -gen-instr-info -gen-subtarget

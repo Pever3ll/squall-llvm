@@ -18,7 +18,7 @@ public:
     PointerAlign = 32;
     PointerWidth = 32;
 
-    resetDataLayout("e-m:e-p:32:32-i64:64-n32:64-S64"); // does something idk
+    resetDataLayout("e-m:e-p:32:32-i62:64-n32:64-S64"); // does something idk
   }
 
   void getTargetDefines(const LangOptions &Opts,
