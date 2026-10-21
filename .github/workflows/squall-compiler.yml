@@ -1,0 +1,87 @@
+name: Squall compiler execution
+
+on:
+  push:
+    paths:
+      - 'llvm/tools/squall-compiler/**'
+      - 'llvm/utils/squall/test_rtl.py'
+      - '.github/workflows/squall-compiler.yml'
+  pull_request:
+    paths:
+      - 'llvm/tools/squall-compiler/**'
+      - 'llvm/utils/squall/test_rtl.py'
+      - '.github/workflows/squall-compiler.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: llvm/tools/squall-compiler
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install compiler and independent interpreter
+        run: python -m pip install -e './llvm/tools/squall-compiler[test]'
+      - name: Install C frontend and native oracle
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - name: Execute compiler, assembly, memory and seeded differential tests
+        working-directory: llvm/tools/squall-compiler
+        run: python -m pytest -q --junitxml=compiler-results.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: squall-compiler-results
+          path: llvm/tools/squall-compiler/compiler-results.xml
+
+  rtl:
+    # The pinned RTL repository is private. Enable only after provisioning access.
+    if: ${{ vars.SQUALL_RTL_ENABLED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            llvm/tools/squall-compiler
+            llvm/utils/squall
+      - name: Checkout the reviewed processor revision
+        uses: actions/checkout@v4
+        with:
+          repository: Jbalkind/isacomp
+          token: ${{ secrets.ISACOMP_READ_TOKEN }}
+          ref: 899ee4456cabd88deb7d2ab1088ad721178dfb8b
+          path: isacomp-rtl
+          # Only HPDcache is needed. Other ISA submodules are unrelated.
+          submodules: false
+      - name: Initialize pinned HPDcache
+        working-directory: isacomp-rtl
+        run: git submodule update --init vendor/cv-hpdcache
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install frontend and RTL simulators
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang iverilog verilator
+          python -m pip install -e './llvm/tools/squall-compiler[test]'
+      - name: Differential compiler-to-RTL regression
+        # Upstream i386 Clang provides p32 LLVM IR in this lightweight job.
+        # Local validation additionally uses our built Squall Clang frontend.
+        run: |
+          python llvm/utils/squall/test_rtl.py \
+            --clang "$(command -v clang)" --frontend-target i386-unknown-none \
+            --isacomp-dir "$GITHUB_WORKSPACE/isacomp-rtl" \
+            --include-memory --random-seeds 0 7 42 --stall-seeds 17 \
+            --output "$GITHUB_WORKSPACE/squall-regression"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: squall-rtl-sources-images-traces
+          path: squall-regression

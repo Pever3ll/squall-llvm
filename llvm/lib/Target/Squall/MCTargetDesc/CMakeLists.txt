@@ -1,14 +1,9 @@
 add_llvm_component_library(LLVMSquallDesc
-  SquallMCAsmInfo.cpp
-  SquallInstPrinter.cpp
-  SquallMCCodeEmitter.cpp
-  SquallAsmBackend.cpp
-  SquallELFObjectWriter.cpp
   SquallMCTargetDesc.cpp
-
-  DEPENDS
-  intrinsics_gen
-  SquallCommonTableGen
+  LINK_COMPONENTS
+  MC
+  SquallInfo
+  Support
 
   ADD_TO_COMPONENT
   Squall

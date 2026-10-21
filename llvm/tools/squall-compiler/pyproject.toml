@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "squall-compiler"
+version = "0.1.0"
+description = "LLVM IR to Squall v2 compiler with checked image emission"
+requires-python = ">=3.11"
+dependencies = ["llvmlite==0.50.0"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "ziglang==0.16.0"]
+
+[project.scripts]
+squall-compile = "squall_compiler.cli:compile_main"
+squall-asm = "squall_compiler.cli:asm_main"
+squall-run = "squall_compiler.reference:main"
+squall-rtl = "squall_compiler.rtl:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+squall_compiler = ["*.zig"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

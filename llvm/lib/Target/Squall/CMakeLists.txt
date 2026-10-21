@@ -1,14 +1,19 @@
 add_llvm_component_group(Squall)
 
-set(LLVM_TARGET_DEFINITIONS Squall.td)
-
-tablegen(LLVM SquallGenRegisterInfo.inc -gen-register-info)
-tablegen(LLVM SquallGenInstrInfo.inc -gen-instr-info)
-tablegen(LLVM SquallGenSubtargetInfo.inc -gen-subtarget)
-tablegen(LLVM SquallGenAsmMatcher.inc -gen-asm-matcher)
-
-add_public_tablegen_target(SquallCommonTableGen)
-
-add_subdirectory(AsmParser)
+# Native MachineInstr/MC lowering is not implemented yet. Keep recognition
+# buildable while llvm/tools/squall-compiler provides the executable IR path.
+add_llvm_target(SquallCodeGen
+  SquallTargetMachine.cpp
+  LINK_COMPONENTS
+  Core
+  MC
+  SquallDesc
+  SquallInfo
+  Support
+  Target
+  TargetParser
+  ADD_TO_COMPONENT
+  Squall
+)
 add_subdirectory(MCTargetDesc)
 add_subdirectory(TargetInfo)
