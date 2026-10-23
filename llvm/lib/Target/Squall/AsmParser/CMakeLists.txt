@@ -8,10 +8,6 @@ add_llvm_component_library(LLVMSquallAsmParser
   SquallInfo
   Support
 
-  DEPENDS
-  intrinsics_gen
-  SquallCommonTableGen
-
   ADD_TO_COMPONENT
   Squall
 )
