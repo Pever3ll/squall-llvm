@@ -18,11 +18,27 @@ public:
     PointerAlign = 32;
     PointerWidth = 32;
 
-    resetDataLayout("e-m:e-p:32:32-i62:64-n32:64-S64"); // does something idk
+    // C/LLVM widths describe source values, not the matching store's payload.
+    // The standalone lowering currently accepts only i1/i32 scalar values.
+    TLSSupported = false;
+    resetDataLayout(Triple.computeDataLayout());
   }
 
   void getTargetDefines(const LangOptions &Opts,
                         MacroBuilder &Builder) const override;
+
+  llvm::SmallVector<Builtin::InfosShard> getTargetBuiltins() const override {
+    return {};
+  }
+  BuiltinVaListKind getBuiltinVaListKind() const override {
+    return CharPtrBuiltinVaList;
+  }
+  ArrayRef<const char *> getGCCRegNames() const override { return {}; }
+  ArrayRef<GCCRegAlias> getGCCRegAliases() const override { return {}; }
+  bool validateAsmConstraint(const char *&, ConstraintInfo &) const override {
+    return false;
+  }
+  std::string_view getClobbers() const override { return ""; }
 };
 
 } // namespace targets

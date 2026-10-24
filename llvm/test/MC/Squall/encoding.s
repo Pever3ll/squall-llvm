@@ -1,0 +1,23 @@
+; RUN: llvm-mc -triple=squallv2 -show-encoding %s | FileCheck %s
+; RUN: llvm-mc -triple=squallv2 -filetype=obj %s -o %t.o
+; RUN: llvm-objdump -d %t.o | FileCheck %s --check-prefix=DIS
+add.r (1).l [4]
+; CHECK: add.r (1).l [4] {{.*}}encoding: [0x11,0x00,0x00,0x40,0x00,0x0c,0x00,0x00]
+sub.c (-2).r.r (3)
+; CHECK: sub.c (-2).r.r (3) {{.*}}encoding: [0x15,0x03,0x00,0x30,0x80,0xf2,0xff,0xff]
+add (1).l #-7
+; CHECK: add (1).l #-7 {{.*}}encoding: [0x10,0xe4,0xff,0xff,0xff,0x0b,0x00,0x00]
+send.r (1).l [0]
+; CHECK: send.r (1).l [0] {{.*}}encoding: [0x01,0x00,0x00,0x0c,0x00,0x0c,0x00,0x00]
+extract.c (-2).r (3).l 17
+; CHECK: extract.c (-2).r (3).l 17 {{.*}}encoding: [0x0d,0x00,0x00,0x18,0x01,0xf3,0xff,0xff]
+write 1
+; CHECK: write 1 {{.*}}encoding: [0x06,0x00,0x00,0x00,0x00,0x00,0x00,0x00]
+.slot 35
+.word -1
+; DIS: add.r (1).l [4]
+; DIS: sub.c (-2).r.r (3)
+; DIS: add (1).l #-7
+; DIS: send.r (1).l [0]
+; DIS: extract.c (-2).r (3).l 17
+; DIS: write 1

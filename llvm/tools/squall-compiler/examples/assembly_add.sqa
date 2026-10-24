@@ -1,0 +1,10 @@
+; Launch one control token at entry, FP=0. All numeric offsets are words.
+; The secondary Add token carries the overflow bit to the next word.
+entry:   dupr compute.l #7
+compute: add.r publish.l.r (rhs)
+carry:   write 3
+publish: dupl success.l.l #0
+result:  write 1
+success: dupr status.l #1
+status:  write 2
+rhs:     .slot 35
