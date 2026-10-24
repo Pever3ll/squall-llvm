@@ -13,6 +13,7 @@ import subprocess
 import sys
 
 from squall_compiler.compiler import compile_ir
+from squall_compiler.native import unpack_image
 from squall_compiler.random_programs import generate
 from squall_compiler.reference import run_image
 from squall_compiler.rtl import run_rtl, build_simulator, VARIANTS
@@ -55,6 +56,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--clang", type=Path, required=True, help="newly built Squall Clang")
     parser.add_argument("--frontend-target", default="squallv2-unknown-none")
+    parser.add_argument("--native-bin", type=Path, help="Use native llc/MC code generation from this bin directory")
     parser.add_argument("--include-memory", action="store_true")
     parser.add_argument("--random-seeds", nargs="*", type=int, default=[])
     parser.add_argument("--stall-seeds", nargs="*", type=int, default=[])
@@ -120,7 +122,7 @@ def main():
         configurations.extend(("production", 5, seed, args.stall_jitter) for seed in args.stall_seeds)
     def config_key(variant, latency, seed, jitter):
         return f"{variant}-lat{latency}" + (f"-seed{seed}-jitter{jitter}" if jitter else "")
-    report = {"commands": commands, "cases": len(cases), "configurations": {}, "runs": []}
+    report = {"compiler": "native-llvm" if args.native_bin else "standalone-python", "commands": commands, "cases": len(cases), "configurations": {}, "runs": []}
     for variant, latency, seed, jitter in configurations:
         key = config_key(variant, latency, seed, jitter)
         print(f"Building {key}", flush=True)
@@ -129,16 +131,29 @@ def main():
         image = args.output / "images" / name
         # A generous physical stack region accommodates each implementation's
         # halt padding; runtime assertions still enforce its declared bound.
-        compiled = compile_ir(ir, entry=entry, arguments=arguments, stack_tokens=1024)
-        compiled.write(image)
+        image.mkdir(parents=True, exist_ok=True)
         (image / "input.ll").write_text(ir)
+        if args.native_bin:
+            command = [str(args.native_bin / "llc"), "-mtriple=squallv2-unknown-none",
+                       "-filetype=obj", "-squall-entry=" + entry,
+                       *["-squall-arg=" + str(value) for value in arguments],
+                       str(image / "input.ll"), "-o", str(image / "native.o")]
+            subprocess.run(command, check=True, timeout=60)
+            manifest = unpack_image(image / "native.o", image, objcopy=args.native_bin / "llvm-objcopy")
+            code_words = len(manifest["symbols"]) - 1
+            data = (image / "memory.bin").read_bytes()
+            initialized_words = sum(int.from_bytes(data[i:i+8], "little") != 0 for i in range(0, len(data), 8))
+        else:
+            compiled = compile_ir(ir, entry=entry, arguments=arguments, stack_tokens=1024)
+            compiled.write(image)
+            code_words, initialized_words = len(compiled.assembly.records), len(compiled.words)
         reference = run_image(image, trace=True)
         if not reference["quiescent"] or reference["status"] != 1 or reference["result"] != expected:
             raise RuntimeError(f"{name}: compiler/reference disagrees with independent host execution: {reference}, expected {expected}")
         for variant, latency, seed, jitter in configurations:
             row = {"case": name, "entry": entry, "arguments": arguments, "expected": expected,
                    "configuration": config_key(variant, latency, seed, jitter),
-                   "code_words": len(compiled.assembly.records), "initialized_words": len(compiled.words),
+                   "code_words": code_words, "initialized_words": initialized_words,
                    "reference_cycles": reference["cycles"], "peak_tokens": reference["peak_tokens"]}
             try:
                 result = run_rtl(image, isacomp=args.isacomp_dir, variant=variant, memory_latency=latency, stall_seed=seed, stall_jitter=jitter)

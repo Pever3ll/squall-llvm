@@ -4,12 +4,18 @@ on:
   push:
     paths:
       - 'llvm/tools/squall-compiler/**'
-      - 'llvm/utils/squall/test_rtl.py'
+      - 'llvm/utils/squall/**'
+      - 'llvm/lib/Target/Squall/**'
+      - 'llvm/test/MC/Squall/**'
+      - 'llvm/test/CodeGen/Squall/**'
       - '.github/workflows/squall-compiler.yml'
   pull_request:
     paths:
       - 'llvm/tools/squall-compiler/**'
-      - 'llvm/utils/squall/test_rtl.py'
+      - 'llvm/utils/squall/**'
+      - 'llvm/lib/Target/Squall/**'
+      - 'llvm/test/MC/Squall/**'
+      - 'llvm/test/CodeGen/Squall/**'
       - '.github/workflows/squall-compiler.yml'
   workflow_dispatch:
 
@@ -39,6 +45,42 @@ jobs:
         with:
           name: squall-compiler-results
           path: llvm/tools/squall-compiler/compiler-results.xml
+
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            llvm
+            cmake
+            third-party
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install native build and differential test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build
+          python -m pip install -e './llvm/tools/squall-compiler[test]'
+      - name: Build actual LLVM MC and llc tools
+        run: |
+          python llvm/utils/squall/build.py --build-dir "$GITHUB_WORKSPACE/native-build" \
+            --llvm-only --static-tools --jobs 3 \
+            --target llvm-mc --target llc --target llvm-objcopy \
+            --target llvm-objdump --target llvm-readobj --target FileCheck
+      - name: LLVM assembly, fixup and code-generation tests
+        run: python native-build/bin/llvm-lit -v llvm/test/MC/Squall llvm/test/CodeGen/Squall
+      - name: Native encoding and execution differential tests
+        env:
+          SQUALL_LLVM_BIN: ${{ github.workspace }}/native-build/bin
+        run: python -m pytest -q llvm/tools/squall-compiler/tests/test_native.py --junitxml=native-results.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: squall-native-results
+          path: native-results.xml
 
   rtl:
     # The pinned RTL repository is private. Enable only after provisioning access.

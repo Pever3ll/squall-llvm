@@ -1,5 +1,8 @@
 # Squall syntax and memory validation — 2026-10-20
 
+Historical report for the standalone compiler/scaffolding revision. Native LLVM
+integration added later is described in [NATIVE-VALIDATION.md](NATIVE-VALIDATION.md).
+
 **532/532 RTL runs passed**, covering 76 cases on seven configurations. All images
 were generated from LLVM IR emitted by the built Squall Clang frontend. C results
 came from independently executing the same source compiled with host Clang.

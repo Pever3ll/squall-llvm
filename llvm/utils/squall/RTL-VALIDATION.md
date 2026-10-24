@@ -1,5 +1,8 @@
 # Compiler-to-Squall RTL validation — 2026-10-20
 
+Historical report for the standalone compiler/scaffolding revision. Native LLVM
+integration added later is described in [NATIVE-VALIDATION.md](NATIVE-VALIDATION.md).
+
 This records the earlier scalar baseline. The expanded syntax/array/pointer
 regression and seeded memory timing results are in [MEMORY-VALIDATION.md](MEMORY-VALIDATION.md).
 

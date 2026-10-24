@@ -88,7 +88,7 @@ def verify(build):
     run([build / "unittests/TargetParser/TargetParserTests"])
     run([sys.executable, build / "bin/llvm-lit", "-v",
          ROOT / "clang/test/Preprocessor/squall.c", ROOT / "clang/test/CodeGen/squall.c",
-         ROOT / "llvm/test/CodeGen/Squall"])
+         ROOT / "llvm/test/CodeGen/Squall", ROOT / "llvm/test/MC/Squall"])
     run([sys.executable, build / "bin/llvm-lit", "-q", "-j", "4",
          ROOT / "llvm/test/Assembler", ROOT / "llvm/test/Verifier",
          ROOT / "llvm/test/FileCheck", ROOT / "llvm/test/TableGen"])
@@ -106,6 +106,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path, default=ROOT.parent / "squall-llvm-build")
     parser.add_argument("--jobs", type=int, default=6)
+    parser.add_argument("--llvm-only", action="store_true", help="Build LLVM tools without the Clang project")
+    parser.add_argument("--static-tools", action="store_true", help="Link only requested tool dependencies instead of the LLVM dylib")
     parser.add_argument("--configure-only", action="store_true")
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--target", action="append", default=[])
@@ -117,9 +119,16 @@ def main():
         raise RuntimeError("install Ninja (python -m pip install ninja), then put it on PATH")
     restore()
     build = args.build_dir.resolve()
-    run(["cmake", "-S", ROOT / "llvm", "-B", build, "-G", "Ninja", "-C",
-         Path(__file__).with_name("native-cache.cmake"), f"-DCMAKE_MAKE_PROGRAM={ninja}",
-         f"-DPython3_EXECUTABLE={sys.executable}"])
+    configure = ["cmake", "-S", ROOT / "llvm", "-B", build, "-G", "Ninja", "-C",
+                 Path(__file__).with_name("native-cache.cmake"), f"-DCMAKE_MAKE_PROGRAM={ninja}",
+                 f"-DPython3_EXECUTABLE={sys.executable}"]
+    if args.llvm_only:
+        configure.append("-DLLVM_ENABLE_PROJECTS=")
+    if args.static_tools:
+        configure.extend(["-DLLVM_BUILD_LLVM_DYLIB=OFF", "-DLLVM_LINK_LLVM_DYLIB=OFF"])
+    if args.check and args.llvm_only:
+        parser.error("--check includes Clang; omit --llvm-only or run the LLVM checks separately")
+    run(configure)
     if args.configure_only:
         return
     command = ["cmake", "--build", build, "-j", str(args.jobs)]

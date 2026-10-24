@@ -16,6 +16,7 @@ test = ["pytest>=8", "ziglang==0.16.0"]
 squall-compile = "squall_compiler.cli:compile_main"
 squall-asm = "squall_compiler.cli:asm_main"
 squall-run = "squall_compiler.reference:main"
+squall-image = "squall_compiler.native:main"
 squall-rtl = "squall_compiler.rtl:main"
 
 [tool.setuptools.packages.find]

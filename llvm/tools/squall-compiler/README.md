@@ -342,30 +342,33 @@ These directed simulation checks do not establish tapeout signoff. Broader
 randomized concurrent protocol tests, self-modifying-code/coherence behavior, formal
 properties, and physical implementation checks remain separate work.
 
-## Native LLVM target status and next work
+## Native LLVM path
 
-The Squall LLVM/Clang scaffolding now has target recognition, little-endian
-layout, required Clang overrides, distinct relocation numbers, and consistent
-CMake/registration names. The **complete configured native LLVM 23.1.2 / Clang
-tools build succeeds** with Squall selected. Its target parser unit tests and
-Squall frontend/diagnostic lit tests also pass.
+The native C++ target now implements `llvm-mc` parsing/encoding, instruction
+printing, disassembly, ELF fixups/relocations, and `llc` LLVM IR-to-token lowering.
+The built Clang can emit Squall ELF objects directly. This Python compiler and
+assembler remain independent implementations for differential testing; native
+code generation does not invoke them or a Python subprocess.
 
-The omitted libc sources were restored from the matching upstream 23.1.2
-revision, along with the omitted test infrastructure and selected regression
-suites. See [native build instructions](../../utils/squall/README.md) for the
-source pin, repeatable build helper, and precise build/test scope. The native
-Clang frontend has also compiled the C example through this compiler to matching
-results on the Zig reference and Isacomp baseline RTL.
+The native target lowers IR directly to MCInsts through the legacy code-generation
+pass manager, using the same serial cell-memory ABI and restricted source subset.
+A conventional register-based MachineInstr pipeline is not used. See the
+[native build and usage guide](../../utils/squall/README.md).
 
-Native MachineInstr instruction selection, MC assembler/disassembler/object
-emission, ELF linking/relocation application, a general byte-addressed C ABI, byte/struct/heap
-accesses, and parallel scheduling remain separate implementation work. The
-registered native TargetMachine intentionally reports unsupported code emission;
-use `squall-compile`, not `llc`, for the executable path described here.
+`squall-image input.o -o out/image --objcopy /path/to/llvm-objcopy` unpacks the
+native object's `.squall.image` and `.squall.config` sections into the existing
+runner format. This command only packages already encoded bytes; it performs
+no instruction selection, assembly, relocation application, or code generation.
+
+General byte/struct/heap access, separate compilation and linking, parallel
+scheduling, MIR and JIT remain outside the implemented scope. Native ELF machine
+ID 999 and relocation assignments are experimental project conventions.
 
 ## GitHub Actions access
 
-The reference job runs automatically and fetches the public pinned Zig reference.
+The reference and native jobs run automatically and fetch the public pinned Zig
+reference. The native job builds LLVM MC/llc tools and runs LLVM lit plus native
+encoding/execution differential tests; it uses upstream Clang for C-to-IR tests.
 The RTL job needs access to the private `Jbalkind/isacomp` repository. Configure a
 repository secret `ISACOMP_READ_TOKEN` with read-only contents access to that
 repository, then set the repository variable `SQUALL_RTL_ENABLED` to `true`.

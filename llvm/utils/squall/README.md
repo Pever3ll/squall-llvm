@@ -61,18 +61,79 @@ Do not report `check-llvm` as the complete upstream regression suite unless the
 matching full `llvm/test` corpus has also been restored. Focused Squall lit tests
 and the linked target parser unit suite provide the native target checks here.
 
-## Compiler scope
+## Native assembler and compiler
 
-A successful native build makes the LLVM tools and Clang available. Squall
-MachineInstr instruction selection, native MC encoding, and ELF object generation
-remain unimplemented. Use Clang's LLVM IR output as input to the executable
-`llvm/tools/squall-compiler` path:
+The native target supports the documented i1/i32/pointer/fixed-array subset. Its
+C++ lowering pass converts LLVM IR into Squall token/slot operations, then emits
+MCInsts through LLVM's MCStreamer. No Python compiler or assembler runs in this
+path. It uses the legacy `llc` code-generation pass manager; it does not implement
+a register allocator, a MachineInstr/MIR pipeline, new-PM codegen, or JIT.
+
+From the repository root, with the Python package installed for image unpacking
+and simulation:
 
 ```sh
+python3 -m pip install -e './llvm/tools/squall-compiler[test]'
 ../squall-llvm-build/bin/clang --target=squallv2-unknown-none -O0 -S -emit-llvm \
   llvm/tools/squall-compiler/examples/kernel.c -o kernel.ll
-squall-compile kernel.ll --entry kernel --arg 7 -o out/kernel
+../squall-llvm-build/bin/llc -mtriple=squallv2-unknown-none -filetype=obj \
+  -squall-entry=kernel -squall-arg=7 kernel.ll -o kernel.o
+squall-image kernel.o -o out/kernel --objcopy ../squall-llvm-build/bin/llvm-objcopy
 squall-run out/kernel --expect 45
 ```
 
-Native `llc` Squall machine-code emission is still an unsupported operation.
+For direct native frontend-to-object generation, Clang accepts the launch options
+through `-mllvm`:
+
+```sh
+../squall-llvm-build/bin/clang --target=squallv2 -O0 -c \
+  -mllvm -squall-entry=kernel -mllvm -squall-arg=7 \
+  llvm/tools/squall-compiler/examples/kernel.c -o kernel.o
+```
+
+Omit `-filetype=obj` from `llc` for textual assembly. Reassemble that output with
+`llvm-mc -triple=squallv2 -filetype=obj kernel.s -o kernel.o`. The resulting image
+bytes must match direct object emission.
+
+### Handwritten assembly and objects
+
+```sh
+../squall-llvm-build/bin/llvm-mc -triple=squallv2 -filetype=obj program.sqa -o program.o
+../squall-llvm-build/bin/llvm-objdump -d program.o
+../squall-llvm-build/bin/llvm-readobj -r program.o
+```
+
+The parser accepts the team ALU/send/extract/write forms, `.slot` and 64-bit
+`.word`, plus normal LLVM directives such as `.section`, `.quad` and `.zero`.
+Instruction fields and literal destination offsets use **64-bit word units**;
+ELF symbol values and symbolic expression addends use **byte units**. Local
+label fixups check eight-byte alignment and signed field ranges before scaling.
+Raw `.text` defaults to physical word 256 for the predefined `halt` destination;
+`.squall_origin N` changes that assumed word origin. This directive does not add
+padding or link/place a section. A raw assembly object holds code/data sections;
+it needs host launch state before it is a complete executable image.
+
+The native compiler's objects instead contain a dense, zero-initialized
+`.squall.image` section beginning at physical address zero, and a JSON
+`.squall.config` section containing the ABI, launch state, symbols and memory
+layout. `squall-image` extracts those bytes with `llvm-objcopy`. It does not compile
+or re-encode instructions. Both reference and RTL runners consume this image.
+
+ELF32 machine ID 999 is an experimental Squall assignment already used by this
+repository. Relocations are `R_SQUALL_32`, `R_SQUALL_64`, `R_SQUALL_BRANCH20`,
+`R_SQUALL_TARGET20` and `R_SQUALL_CODE11`. The three instruction relocations apply
+`(S + A - P) / 8` to their respective signed fields. ELF relocation addends are
+bytes. Object emission and relocation recording are implemented; there is no
+Squall linker or external-symbol resolver. Compiled images resolve all internal
+references before emission and require all called functions in the input module.
+
+The ABI remains restricted and serial: no byte/struct/heap memory, external calls,
+flat host-pointer imports or overlapping memory helpers. Native code generation
+uses `-squall-entry` (default `main`), repeated `-squall-arg`, `-squall-memory-bytes`,
+`-squall-frames`, and `-squall-stack-tokens`. These build a complete launch image,
+not a general platform C ABI. The Python implementation remains an independent
+reference. See [native validation](NATIVE-VALIDATION.md).
+
+For the smaller MC/llc-only CI build, `build.py --llvm-only --static-tools` omits
+Clang and links only requested tool dependencies. This is separate from the
+complete configured LLVM/Clang build above. `--check` requires Clang.

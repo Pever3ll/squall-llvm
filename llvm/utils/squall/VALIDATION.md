@@ -1,5 +1,8 @@
 # Native Squall LLVM/Clang validation — 2026-10-20
 
+Historical report for the standalone compiler/scaffolding revision. Native LLVM
+integration added later is described in [NATIVE-VALIDATION.md](NATIVE-VALIDATION.md).
+
 The complete configured LLVM **23.1.2** / Clang tools build succeeded on arm64
 macOS with Apple Clang 16.0.0. All default build targets completed, followed by a
 successful incremental rebuild; Ninja now reports **no work to do**.
