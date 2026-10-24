@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "squall-tools"
+version = "0.2.0"
+description = "Loader and differential test harness for the LLVM Squall v2 backend"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8", "ziglang==0.16.0"]
+
+[project.scripts]
+squall-image = "squall_tools.image:main"
+squall-run = "squall_tools.reference:main"
+squall-rtl = "squall_tools.rtl:main"
+
+[tool.setuptools]
+packages = ["squall_tools"]
+
+[tool.setuptools.package-data]
+squall_tools = ["*.zig"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

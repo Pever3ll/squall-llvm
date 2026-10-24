@@ -3760,4 +3760,19 @@ TEST(DataLayoutTest, CheriRISCV32) {
               testing::HasSubstr("A200-P200-G200"));
 }
 
+TEST(TripleTest, SquallV2) {
+  Triple T("squallv2-unknown-none");
+  EXPECT_EQ(T.getArch(), Triple::squall);
+  EXPECT_EQ(T.getSubArch(), Triple::SquallSubArch_v2);
+  EXPECT_EQ(Triple::getArchName(T.getArch(), T.getSubArch()), "squallv2");
+  EXPECT_EQ(Triple::normalize(T.str()), T.str());
+  EXPECT_TRUE(T.isLittleEndian());
+  EXPECT_EQ(T.getLittleEndianArchVariant().getArch(), Triple::squall);
+  EXPECT_EQ(T.getBigEndianArchVariant().getArch(), Triple::UnknownArch);
+  EXPECT_EQ(Triple::getArchTypePrefix(Triple::squall), "squall");
+  EXPECT_TRUE(T.isArch32Bit());
+  EXPECT_EQ(T.computeDataLayout(), "e-m:e-p:32:32-i64:64-n32-S128");
+  EXPECT_EQ(Triple("squall-unknown-none").getArch(), Triple::squall);
+}
+
 } // end anonymous namespace
