@@ -3,7 +3,10 @@ import os
 
 import pytest
 
-from conftest import compile_ir, requires_llvm
+import json
+import subprocess
+
+from conftest import EXAMPLES, clang, compile_ir, load, requires_llvm
 from squall_tools.rtl import run_rtl
 from test_codegen import FIBONACCI
 
@@ -70,3 +73,27 @@ def test_seeded_stalls_repeat_and_change_timing(tmp_path):
     assert first["wall_cycles"] == repeat["wall_cycles"]
     assert first["wall_cycles"] != other["wall_cycles"]
     assert first["wall_cycles"] > fixed["wall_cycles"]
+
+
+@requires_llvm
+@requires_rtl
+@pytest.mark.parametrize("variant,latency", [("baseline", 0), ("pipeline", 0), ("production", 5)])
+def test_fork_join_lanes_overlap_on_rtl(tmp_path, variant, latency):
+    """Two independent chains per iteration run as two tokens: same result and
+    executed tokens on every core, fewer cycles where tokens overlap."""
+    if not clang():
+        pytest.skip("the built Squall Clang is required")
+    cycles = {}
+    for fork in (False, True):
+        obj = tmp_path / f"chains{int(fork)}.o"
+        subprocess.run([clang(), "--target=squallv2", "-O2", "-c", "-mllvm", "-squall-entry=chains",
+                        *(["-mllvm", "-squall-fork-join"] if fork else []),
+                        str(EXAMPLES / "parallel.c"), "-o", str(obj)], check=True)
+        image = tmp_path / f"image{int(fork)}"
+        load(obj, image, [60])
+        assert json.loads((image / "manifest.json").read_text())["parallel_lanes"] == fork
+        result = run_rtl(image, variant=variant, memory_latency=latency)
+        assert result["trace_matches"] and result["memory_matches"], result
+        cycles[fork] = result["wall_cycles"]
+    if variant != "baseline":
+        assert cycles[True] < cycles[False] * 0.8, cycles

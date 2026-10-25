@@ -92,7 +92,7 @@ def memory_words(output):
 def observable_memory(words, manifest):
     low = (manifest["stack_base"] - manifest["stack_token_capacity"] * 16) // 8
     high = (manifest["stack_base"] + 16) // 8
-    once_slots = set(manifest.get("bootstrap_slots", []))
+    once_slots = set(manifest.get("bootstrap_slots", [])) | set(manifest.get("join_words", []))
     normalized = {}
     for address, value in words.items():
         if low <= address < high:
@@ -105,15 +105,22 @@ def observable_memory(words, manifest):
 
 
 def execution_order_matches(actual, expected, manifest):
-    """Allow bootstrap argument scheduling, then require the serial ABI order."""
+    """Allow bootstrap argument scheduling, then require the serial ABI order.
+
+    Images with parallel lanes run two tokens at once, which cores may
+    interleave differently; for them the executed tokens must match as a
+    multiset instead."""
     entry = manifest["functions"][manifest["entry"]]["entry_word"]
     frame = manifest["root_frame_word"]
     def split(rows):
         at = next((i for i, token in enumerate(rows) if token[0] == entry and token[1] == frame), None)
         return None if at is None else (rows[:at], rows[at:])
     left, right = split(actual), split(expected)
-    return (left is not None and right is not None
-            and Counter(left[0]) == Counter(right[0]) and left[1] == right[1])
+    if left is None or right is None or Counter(left[0]) != Counter(right[0]):
+        return False
+    if manifest.get("parallel_lanes"):
+        return Counter(left[1]) == Counter(right[1])
+    return left[1] == right[1]
 
 
 def run_rtl(directory, *, isacomp=None, cache=None, reference=None,
@@ -173,7 +180,8 @@ def run_rtl(directory, *, isacomp=None, cache=None, reference=None,
               "memory_matches": not differences, "memory_differences": differences[:20],
               "isacomp_commit": ISACOMP_COMMIT, "reference_commit": expected["reference_commit"],
               "simulator": simulator, "stall_seed": stall_seed, "stall_jitter": stall_jitter}
-    result["trace_matches"] = result["trace_order_matches" if variant == "baseline" else "execution_order_matches"]
+    serial = variant == "baseline" and not manifest.get("parallel_lanes")
+    result["trace_matches"] = result["trace_order_matches" if serial else "execution_order_matches"]
     result["wall_cycles"] = next((int(row.split()[1]) for row in output.splitlines() if row.startswith("WALL ")), None)
     (directory / f"{stem}-result.json").write_text(json.dumps(result, indent=2) + "\n")
     if actual != expected["result"] or result["status"] != 1 or not result["trace_matches"] or differences:

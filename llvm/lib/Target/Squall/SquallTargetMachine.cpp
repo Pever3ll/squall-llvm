@@ -27,6 +27,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSquallTarget() {
   initializeSquallAsmPrinterPass(PR);
   initializeSquallCheckIRPass(PR);
   initializeSquallLowerMemoryPass(PR);
+  initializeSquallForkJoinPass(PR);
   initializeSquallDAGToDAGISelLegacyPass(PR);
 }
 
@@ -67,6 +68,8 @@ public:
     addPass(createSquallLowerMemoryPass());
     return false;
   }
+  // After register allocation, before the frame layout is fixed.
+  void addPostRegAlloc() override { addPass(createSquallForkJoinPass()); }
   bool addInstSelector() override {
     addPass(createSquallISelDag(getTM<SquallTargetMachine>(), getOptLevel()));
     return false;

@@ -206,3 +206,11 @@ let isReturn = 1, isTerminator = 1, isBarrier = 1 in {
   def RET : SquallPseudo<(outs), (ins), [(SquallRetVoid)]>;
   def RETV : SquallPseudo<(outs), (ins GPR:$v), [(SquallRet GPR:$v)]>;
 }
+
+// Parallel lanes (SquallForkJoin): FORK id; lane A; LANE id; lane B; JOIN id.
+// The unique id keeps branch folding from merging parts of different regions.
+let hasSideEffects = 1, isNotDuplicable = 1 in {
+  def FORK : SquallPseudo<(outs), (ins i32imm:$id)>;
+  def LANE : SquallPseudo<(outs), (ins i32imm:$id)>;
+  def JOIN : SquallPseudo<(outs), (ins i32imm:$id)>;
+}

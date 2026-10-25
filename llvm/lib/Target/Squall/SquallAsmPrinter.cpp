@@ -17,6 +17,7 @@
 //   (0)        halt destination; tokens sent here are discarded
 //   (1), (2)   result and status written by the host return stub
 //   (3)-(6)    mailboxes of the serial dynamic memory-access helper
+//   (7)        join slot of parallel lanes; empty between joins
 //   (8)-(15)   entry argument slots, written by the loader
 //   (16)...    globals, in module order
 //   (>=256)    runtime stubs, then functions
@@ -51,6 +52,7 @@
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Target/TargetMachine.h"
+#include <numeric>
 
 using namespace llvm;
 
@@ -65,7 +67,6 @@ static cl::opt<uint64_t>
 static cl::opt<unsigned>
     StackTokens("squall-stack-tokens", cl::init(1024),
                 cl::desc("Token stack capacity of the Squall image"));
-
 namespace {
 
 // ALU operation numbers of the Squall v2 ISA.
@@ -92,8 +93,8 @@ enum MatchRule : unsigned { Once = 0, Const = 1, Read = 2 };
 enum Port : unsigned { Left = 0, Right = 1 };
 
 constexpr unsigned ResultWord = 1, StatusWord = 2, FirstMailbox = 3,
-                   ArgumentWord = 8, MaxEntryArgs = 8, FirstGlobalWord = 16,
-                   MinCodeWord = 256;
+                   JoinWord = 7, ArgumentWord = 8, MaxEntryArgs = 8,
+                   FirstGlobalWord = 16, MinCodeWord = 256;
 constexpr int64_t StatusSuccess = 1, StatusDepth = 2, StatusMemory = 3;
 // A token tag packs the instruction word address in bits 0-28, the frame
 // pointer word in bits 29-57, and the entry port in bit 58.
@@ -142,6 +143,7 @@ class Chain {
   SmallVector<Word, 24> Words;
   const MCSymbol *Halt;
   unsigned EndPort = Left; // Entry port of the word after the chain.
+  unsigned Scratch;        // Frame word for intermediate values.
 
   int nextAttached(int I) const {
     for (int J = I + 1, E = Words.size(); J < E; ++J)
@@ -180,7 +182,10 @@ class Chain {
   }
 
 public:
-  explicit Chain(const MCSymbol *Halt) : Halt(Halt) {}
+  explicit Chain(const MCSymbol *Halt, unsigned Scratch = Squall::ScratchWord)
+      : Halt(Halt), Scratch(Scratch) {}
+
+  unsigned scratch() const { return Scratch; }
 
   Word &operator[](int I) { return Words[I]; }
   int size() const { return Words.size(); }
@@ -304,10 +309,10 @@ public:
   /// resumes by reading it back.
   int captureSecondary(int Producer) {
     Words[Producer].Secondary = true;
-    int Capture = store(Squall::ScratchWord);
+    int Capture = store(Scratch);
     Words[Capture].D = Dest::symbol(Halt);
     Words[Capture].Detached = true;
-    int Resume = read(Squall::ScratchWord);
+    int Resume = read(Scratch);
     Words[Producer].D = Dest::item(Resume);
     return Resume;
   }
@@ -372,6 +377,11 @@ class SquallAsmPrinter : public AsmPrinter {
   /// the register it just stored can be dropped: the token still carries it.
   std::optional<Chain> Pending;
   unsigned HostReturnWord = 0, StartWord = 0;
+  /// Parallel lanes (see SquallForkJoin): the scratch word of the lane being
+  /// emitted, and the labels of each region's second lane and join.
+  unsigned Scratch = Squall::ScratchWord;
+  DenseMap<int64_t, std::pair<MCSymbol *, MCSymbol *>> Lanes;
+  bool Forked = false; // Whether any lanes were emitted.
 
 public:
   static char ID;
@@ -421,6 +431,11 @@ private:
   void expandMemory(Chain &C, const MachineInstr &MI, bool IsStore,
                     std::optional<unsigned> PointerReg, int64_t Pointer);
   void expandCall(Chain &C, const MachineInstr &MI);
+  /// The chain of encoded words for one machine instruction.
+  Chain expand(const MachineInstr &MI, unsigned Scratch);
+  /// Emit a chain after the pending one, dropping a redundant first read.
+  void append(Chain C);
+  void emitLaneMarker(const MachineInstr &MI);
   json::Object manifest(const Module &M) const;
   void flush(unsigned Port) {
     if (!Pending)
@@ -640,10 +655,10 @@ void SquallAsmPrinter::expandBinary(Chain &C, const MachineInstr &MI, int Alu,
   } else if (Unsigned) {
     C.read(word(B));
     C.zeroExtend32();
-    C.store(Squall::ScratchWord);
+    C.store(C.scratch());
     C.read(A);
     C.zeroExtend32();
-    C.slotOp(Alu, FrameSlot, Squall::ScratchWord);
+    C.slotOp(Alu, FrameSlot, C.scratch());
   } else {
     C.read(A);
     C.slotOp(Alu, FrameSlot, word(B));
@@ -688,8 +703,8 @@ void SquallAsmPrinter::expandCompare(Chain &C, const MachineInstr &MI) {
   if (Signed) {
     C.read(B);
     C.imm(Xor, INT32_MIN);
-    C.store(Squall::ScratchWord);
-    Right = Squall::ScratchWord;
+    C.store(C.scratch());
+    Right = C.scratch();
   }
   C.read(A);
   if (Signed)
@@ -843,7 +858,19 @@ void SquallAsmPrinter::emitFunctionEntryLabel() {
 void SquallAsmPrinter::emitInstruction(const MachineInstr *MI) {
   if (!Entry)
     return; // The image layout was rejected; an error is already reported.
-  Chain C(Halt);
+  switch (MI->getOpcode()) {
+  case Squall::FORK:
+  case Squall::LANE:
+  case Squall::JOIN:
+    return emitLaneMarker(*MI);
+  default:
+    append(expand(*MI, Scratch));
+  }
+}
+
+Chain SquallAsmPrinter::expand(const MachineInstr &Instr, unsigned Scratch) {
+  const MachineInstr *MI = &Instr;
+  Chain C(Halt, Scratch);
   auto Op = [&](unsigned I) -> const MachineOperand & {
     return MI->getOperand(I);
   };
@@ -927,10 +954,10 @@ void SquallAsmPrinter::emitInstruction(const MachineInstr *MI) {
   case Squall::MULHU:
     C.read(word(Op(2)));
     C.zeroExtend32();
-    C.store(Squall::ScratchWord);
+    C.store(C.scratch());
     C.read(word(Op(1)));
     C.zeroExtend32();
-    C.slotOp(Mul, FrameSlot, Squall::ScratchWord);
+    C.slotOp(Mul, FrameSlot, C.scratch());
     C.imm(Shrl, 32);
     C.signExtend32();
     C.store(word(Op(0)));
@@ -1030,6 +1057,10 @@ void SquallAsmPrinter::emitInstruction(const MachineInstr *MI) {
     llvm_unreachable("unexpected machine instruction");
   }
   assert(C.size() && C.entry() == Left && "chains are entered on the left");
+  return C;
+}
+
+void SquallAsmPrinter::append(Chain C) {
   if (Pending) {
     if (std::optional<unsigned> Word = Pending->storedWord();
         Word && C.readsFirst(*Word))
@@ -1042,6 +1073,52 @@ void SquallAsmPrinter::emitInstruction(const MachineInstr *MI) {
 void SquallAsmPrinter::emitBasicBlockEnd(const MachineBasicBlock &MBB) {
   flush(Left);
   AsmPrinter::emitBasicBlockEnd(MBB);
+}
+
+// FORK id; lane A; LANE id; lane B; JOIN id becomes
+//
+//   fork:    dupl laneB.l #0, secondary to lane A at the next word
+//   lane A:  ...; dupl join.l #0
+//   lane B:  ...; falling into join on the right
+//   join:    dupl (Once) [JoinWord]
+//
+// The first token to reach the join fills the empty join slot and stops; the
+// second empties it again and continues. Lanes contain no calls, so at most
+// one join is ever pending, and each lane has its own scratch word.
+void SquallAsmPrinter::emitLaneMarker(const MachineInstr &MI) {
+  auto &[LaneB, Join] = Lanes[MI.getOperand(0).getImm()];
+  if (!LaneB) {
+    LaneB = OutContext.createTempSymbol("squall_lane");
+    Join = OutContext.createTempSymbol("squall_join");
+  }
+  switch (MI.getOpcode()) {
+  case Squall::FORK: {
+    Chain Fork(Halt);
+    int Split = Fork.jump(Dest::symbol(LaneB));
+    Fork[Split].Secondary = true;
+    append(std::move(Fork));
+    Forked = true;
+    return;
+  }
+  case Squall::LANE: {
+    Chain ToJoin(Halt);
+    ToJoin.jump(Dest::symbol(Join));
+    append(std::move(ToJoin));
+    flush(Left);
+    OutStreamer->emitLabel(LaneB);
+    Scratch = Squall::LaneScratchWord;
+    return;
+  }
+  default: {
+    flush(Right);
+    Chain Meet(Halt);
+    int Slot = Meet.slotOp(Dupl, AbsoluteSlot, JoinWord, Once);
+    Meet[Slot].Label = Join;
+    Pending = std::move(Meet);
+    Scratch = Squall::ScratchWord;
+    return;
+  }
+  }
 }
 
 json::Object SquallAsmPrinter::manifest(const Module &M) const {
@@ -1085,6 +1162,10 @@ json::Object SquallAsmPrinter::manifest(const Module &M) const {
                                     {"call_depth_exceeded", StatusDepth},
                                     {"invalid_memory_address", StatusMemory}}},
       {"max_cycles", 1000000},
+      // Parallel lanes may interleave differently on different cores; only
+      // the multiset of executed tokens is fixed.
+      {"parallel_lanes", Forked},
+      {"join_words", json::Array{JoinWord}},
       {"globals", std::move(Globals)},
       {"memory_model",
        json::Object{{"pointer_bits", 32},

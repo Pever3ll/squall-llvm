@@ -21,11 +21,13 @@ FunctionPass *createSquallISelDag(SquallTargetMachine &TM,
                                   CodeGenOptLevel OptLevel);
 ModulePass *createSquallCheckIRPass();
 ModulePass *createSquallLowerMemoryPass();
+FunctionPass *createSquallForkJoinPass();
 
 void initializeSquallDAGToDAGISelLegacyPass(PassRegistry &);
 void initializeSquallAsmPrinterPass(PassRegistry &);
 void initializeSquallCheckIRPass(PassRegistry &);
 void initializeSquallLowerMemoryPass(PassRegistry &);
+void initializeSquallForkJoinPass(PassRegistry &);
 
 namespace Squall {
 /// Comparison kinds of the SETCC pseudo.
@@ -33,9 +35,10 @@ enum CondCode { EQ, NE, LT, LE, GT, GE, ULT, ULE, UGT, UGE };
 
 /// Fixed words of every activation frame, relative to its frame pointer.
 enum FrameWord : unsigned {
-  ReturnTagWord = 0, ///< Packed continuation tag written by the caller.
-  ScratchWord = 1,   ///< Temporary used inside one pseudo expansion.
-  FirstRegWord = 3,  ///< Word of register S0.
+  ReturnTagWord = 0,   ///< Packed continuation tag written by the caller.
+  ScratchWord = 1,     ///< Temporary used inside one pseudo expansion.
+  LaneScratchWord = 2, ///< The same, in the second of two parallel lanes.
+  FirstRegWord = 3,    ///< Word of register S0.
 };
 
 /// The number of argument registers; argument I arrives in S<I>.
