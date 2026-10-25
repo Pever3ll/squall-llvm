@@ -45,6 +45,27 @@ CASES = {
         "matrix_product": [()],
         "initialized_local": [(0,), (1,), (2,), (3,)],
     },
+    "bytes.c": {
+        "string_length": [(0,), (9,)],
+        "reverse": [(5,)],
+        "concatenate": [(0,), (3,)],
+        "sort_letters": [(6,)],
+        "signed_bytes": [(-77,)],
+        "shorts": [(-3,)],
+        "records_by_value": [(4,)],
+        "packed_fields": [(12345,)],
+        "adjacent_bytes": [(-91,)],
+        "variable_copies": [(13,), (29,)],
+        "wide_division": [(-99999, 13), (-2147483648, 0)],
+    },
+    "callbacks.c": {
+        "dispatch": [(1, 7, 5), (3, 2, 9)],
+        "folds": [(3,)],
+        "handler_table": [(4,)],
+        "sort_with": [(1,), (2,)],
+        "recursive_pointer": [(17,)],
+        "returned_pointer": [(0,), (5,)],
+    },
     "programs.c": {
         "points": [(0,), (3,), (-7,)],
         "classify": [(0,), (2,), (7,), (-3,), (100,)],
@@ -111,17 +132,20 @@ def main():
         source = sources[source_name]
         library = output / f"{source.stem}-host.so"
         subprocess.run([args.host_clang, "-O0", "-shared", "-fPIC", str(source), "-o", str(library)], check=True)
-        host = ctypes.CDLL(str(library))
         for level in args.opt:
             for entry, inputs in entries.items():
                 obj = output / "objects" / f"{source.stem}{level}-{entry}.o"
                 obj.parent.mkdir(parents=True, exist_ok=True)
                 subprocess.run([tools["clang"], "--target=squallv2", level, "-c", "-mllvm",
                                 f"-squall-entry={entry}", str(source), "-o", str(obj)], check=True)
-                function = getattr(host, entry)
-                function.restype = ctypes.c_uint32
-                for arguments in inputs:
+                for index, arguments in enumerate(inputs):
                     case_count += 1
+                    # A private copy per run: some examples modify globals.
+                    copy = output / "host" / f"{source.stem}{level}-{entry}-{index}.so"
+                    copy.parent.mkdir(exist_ok=True)
+                    shutil.copy(library, copy)
+                    function = getattr(ctypes.CDLL(str(copy)), entry)
+                    function.restype = ctypes.c_uint32
                     function.argtypes = [ctypes.c_int32] * len(arguments)
                     expected = signed32(function(*arguments))
                     name = f"{source.stem}{level}-{entry}-" + "_".join(map(str, arguments))

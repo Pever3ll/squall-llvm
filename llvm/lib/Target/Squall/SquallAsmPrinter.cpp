@@ -32,6 +32,7 @@
 #include "SquallMachineFunctionInfo.h"
 #include "SquallSubtarget.h"
 #include "TargetInfo/SquallTargetInfo.h"
+#include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/MachineInstr.h"
@@ -46,6 +47,7 @@
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Target/TargetMachine.h"
@@ -93,6 +95,10 @@ constexpr unsigned ResultWord = 1, StatusWord = 2, FirstMailbox = 3,
                    ArgumentWord = 8, MaxEntryArgs = 8, FirstGlobalWord = 16,
                    MinCodeWord = 256;
 constexpr int64_t StatusSuccess = 1, StatusDepth = 2, StatusMemory = 3;
+// A token tag packs the instruction word address in bits 0-28, the frame
+// pointer word in bits 29-57, and the entry port in bit 58.
+constexpr unsigned TagFPShift = 29;
+constexpr int64_t TagIPMask = (INT64_C(1) << TagFPShift) - 1;
 
 /// A matching-slot word holding a persistent constant: presence bits 0b10
 /// and a sign-extended 62-bit payload.
@@ -402,7 +408,13 @@ private:
     return OutContext.getOrCreateSymbol(Twine(".Lsquall.entry.") +
                                         getSymbol(&F)->getName());
   }
-  void emitCells(const Constant *C, Type *T);
+  /// Function pointers in the initializer being emitted: cell, function.
+  SmallVector<std::pair<uint64_t, const Function *>, 4> FunctionCells;
+  /// Write a constant's little-endian bytes at Offset in Bytes.
+  void fillBytes(const Constant *C, const DataLayout &DL,
+                 MutableArrayRef<uint8_t> Bytes, uint64_t Offset);
+  /// Emit a global's initializer as constant slots, four bytes per cell.
+  void emitCells(const Constant *C, const DataLayout &DL);
   void expandBinary(Chain &C, const MachineInstr &MI, int Alu, bool Unsigned,
                     bool Normalize);
   void expandCompare(Chain &C, const MachineInstr &MI);
@@ -423,34 +435,79 @@ private:
 
 unsigned SquallAsmPrinter::globalWord(const MachineOperand &MO) {
   const auto *G = cast<GlobalVariable>(MO.getGlobal());
+  assert(MO.getOffset() % 4 == 0 && "slot access must be a whole cell");
   return GlobalWords.lookup(G) + MO.getOffset() / 4;
 }
 
-void SquallAsmPrinter::emitCells(const Constant *C, Type *T) {
-  if (auto *A = dyn_cast<ArrayType>(T)) {
-    for (unsigned I = 0; I < A->getNumElements(); ++I)
-      emitCells(C->getAggregateElement(I), A->getElementType());
+void SquallAsmPrinter::fillBytes(const Constant *C, const DataLayout &DL,
+                                 MutableArrayRef<uint8_t> Bytes,
+                                 uint64_t Offset) {
+  if (isa<ConstantAggregateZero>(C) || isa<UndefValue>(C) ||
+      isa<ConstantPointerNull>(C))
+    return;
+  if (const auto *I = dyn_cast<ConstantInt>(C)) {
+    unsigned Size = DL.getTypeStoreSize(C->getType());
+    APInt Value = I->getValue().zext(Size * 8);
+    for (unsigned B = 0; B < Size; ++B)
+      Bytes[Offset + B] = Value.extractBitsAsZExtValue(8, 8 * B);
     return;
   }
-  if (auto *S = dyn_cast<StructType>(T)) {
+  if (auto *S = dyn_cast<StructType>(C->getType())) {
+    const StructLayout *L = DL.getStructLayout(S);
     for (unsigned I = 0; I < S->getNumElements(); ++I)
-      emitCells(C->getAggregateElement(I), S->getElementType(I));
+      fillBytes(C->getAggregateElement(I), DL, Bytes,
+                Offset + L->getElementOffset(I));
     return;
   }
-  int64_t Value = 0;
-  if (T->isIntegerTy(64)) {
-    // Two little-endian cells.
-    uint64_t Bits =
-        isa<ConstantInt>(C) ? cast<ConstantInt>(C)->getZExtValue() : 0;
-    OutStreamer->emitIntValue(constantSlot(int32_t(Bits)), 8);
-    OutStreamer->emitIntValue(constantSlot(int32_t(Bits >> 32)), 8);
+  if (auto *A = dyn_cast<ArrayType>(C->getType())) {
+    uint64_t Stride = DL.getTypeAllocSize(A->getElementType());
+    for (unsigned I = 0; I < A->getNumElements(); ++I)
+      fillBytes(C->getAggregateElement(I), DL, Bytes, Offset + I * Stride);
     return;
   }
-  if (const auto *I = dyn_cast<ConstantInt>(C))
-    Value = int32_t(I->getSExtValue());
-  else if (const auto *G = dyn_cast<GlobalVariable>(C))
-    Value = int64_t(GlobalWords.lookup(G)) * 4;
-  OutStreamer->emitIntValue(constantSlot(Value), 8);
+  // The byte address of a global, plus a constant offset.
+  GlobalValue *GV = nullptr;
+  APInt Extra(64, 0);
+  if (!IsConstantOffsetFromGlobal(const_cast<Constant *>(C), GV, Extra, DL))
+    return;
+  if (const auto *G = dyn_cast<GlobalVariable>(GV)) {
+    support::endian::write32le(
+        &Bytes[Offset],
+        uint32_t(GlobalWords.lookup(G) * 4 + Extra.getSExtValue()));
+  } else if (const auto *F = dyn_cast<Function>(GV)) {
+    // Code addresses are known only after layout; the cell is an expression.
+    if (Offset % 4 || !Extra.isZero())
+      error(Twine("function pointer to '") + F->getName() +
+            "' must occupy a whole aligned cell in an initializer");
+    else
+      FunctionCells.push_back({Offset / 4, F});
+  }
+}
+
+void SquallAsmPrinter::emitCells(const Constant *C, const DataLayout &DL) {
+  SmallVector<uint8_t, 64> Bytes(alignTo(DL.getTypeAllocSize(C->getType()), 4));
+  FunctionCells.clear();
+  fillBytes(C, DL, Bytes, 0);
+  for (unsigned I = 0; I < Bytes.size(); I += 4) {
+    auto Code = find_if(FunctionCells,
+                        [&](const auto &Cell) { return Cell.first == I / 4; });
+    if (Code == FunctionCells.end()) {
+      OutStreamer->emitIntValue(
+          constantSlot(int32_t(support::endian::read32le(&Bytes[I]))), 8);
+      continue;
+    }
+    // A constant slot holding the entry's word address.
+    MCContext &Ctx = OutContext;
+    const MCExpr *Entry = MCBinaryExpr::createDiv(
+        MCBinaryExpr::createSub(
+            MCSymbolRefExpr::create(entryLabel(*Code->second), Ctx),
+            MCSymbolRefExpr::create(Halt, Ctx), Ctx),
+        MCConstantExpr::create(8, Ctx), Ctx);
+    OutStreamer->emitValue(
+        MCBinaryExpr::createOr(
+            Entry, MCConstantExpr::create(int64_t(constantSlot(0)), Ctx), Ctx),
+        8);
+  }
 }
 
 void SquallAsmPrinter::emitStartOfAsmFile(Module &M) {
@@ -458,9 +515,8 @@ void SquallAsmPrinter::emitStartOfAsmFile(Module &M) {
   Halt = OutContext.getOrCreateSymbol("__squall_halt");
   DepthError = OutContext.getOrCreateSymbol("__squall_depth_error");
   MemoryError = OutContext.getOrCreateSymbol("__squall_memory_error");
-  // IR validation already reported errors and emptied the module.
-  if (M.getNamedMetadata("squall.invalid"))
-    return;
+  // This runs before the IR passes, so IR validation has not run yet; if it
+  // later fails, function bodies become unreachable but stay defined.
   if (MemoryBytes < 64 * 1024 || MemoryBytes % 16 ||
       MemoryBytes > UINT64_C(1) << 32) {
     error("-squall-memory-bytes must be a multiple of 16 between 64 KiB and "
@@ -530,7 +586,7 @@ void SquallAsmPrinter::emitStartOfAsmFile(Module &M) {
     OutStreamer->emitValueToOffset(
         MCConstantExpr::create(It->second * 8, OutContext), 0, SMLoc());
     OutStreamer->emitLabel(getSymbol(&G));
-    emitCells(G.getInitializer(), G.getValueType());
+    emitCells(G.getInitializer(), DL);
   }
   OutStreamer->emitValueToOffset(
       MCConstantExpr::create(CodeStart * 8, OutContext), 0, SMLoc());
@@ -727,12 +783,15 @@ void SquallAsmPrinter::expandMemory(Chain &C, const MachineInstr &MI,
 // new frame fits in the arena, writes the arguments and its continuation tag
 // into the callee frame, and sends a token to the callee with the frame
 // pointer advanced. The callee returns by sending its result to that tag.
+// An indirect call builds the callee's tag from a function pointer, the
+// entry's word address, instead of minting it.
 void SquallAsmPrinter::expandCall(Chain &C, const MachineInstr &MI) {
   unsigned FrameWords =
       MF->getInfo<SquallMachineFunctionInfo>()->getFrameWords();
-  bool HasResult = MI.getOpcode() == Squall::CALLR;
+  unsigned Opcode = MI.getOpcode();
+  bool HasResult = Opcode == Squall::CALLR || Opcode == Squall::CALLIR;
+  bool Indirect = Opcode == Squall::CALLI || Opcode == Squall::CALLIR;
   unsigned CalleeOp = HasResult ? 1 : 0;
-  const auto *Callee = cast<Function>(MI.getOperand(CalleeOp).getGlobal());
 
   // New FP + 2048 must not pass the arena end; the callee can address any
   // word below its FP + 2048 with an 11-bit frame slot.
@@ -754,10 +813,22 @@ void SquallAsmPrinter::expandCall(Chain &C, const MachineInstr &MI) {
   }
   int SaveReturn = C.extract(Dest::end());
   C.store(FrameWords + Squall::ReturnTagWord);
-  C.extract(Dest::symbol(entryLabel(*Callee)));
-  int Advance = C.slotOp(Add, CodeSlot, 0);
-  C.send(FrameSlot, Squall::ReturnTagWord, Left);
-  C[Advance].CodeData = C.data(constantSlot(int64_t(FrameWords) << 29));
+  if (Indirect) {
+    // Callee tag: the pointer's entry word with the callee's frame pointer.
+    C.extract(Dest::symbol(Halt));
+    C.imm(Shrl, TagFPShift);
+    C.imm(Add, FrameWords);
+    C.imm(Shl, TagFPShift);
+    C.slotOp(Or, FrameSlot, word(MI.getOperand(CalleeOp)));
+    C.send(FrameSlot, Squall::ReturnTagWord, Left);
+  } else {
+    const auto *Callee = cast<Function>(MI.getOperand(CalleeOp).getGlobal());
+    C.extract(Dest::symbol(entryLabel(*Callee)));
+    int Advance = C.slotOp(Add, CodeSlot, 0);
+    C.send(FrameSlot, Squall::ReturnTagWord, Left);
+    C[Advance].CodeData =
+        C.data(constantSlot(int64_t(FrameWords) << TagFPShift));
+  }
   if (HasResult) {
     int Store = C.store(word(MI.getOperand(0)));
     C[SaveReturn].Target = Dest::item(Store);
@@ -786,7 +857,18 @@ void SquallAsmPrinter::emitInstruction(const MachineInstr *MI) {
     C.store(word(Op(0)));
     break;
   case Squall::MOVG:
-    C.imm(Dupr, int64_t(globalWord(Op(1))) * 4);
+    if (const auto *F = dyn_cast<Function>(Op(1).getGlobal())) {
+      // A function pointer is the entry's word address: the instruction field
+      // of a tag minted for the entry.
+      C.extract(Dest::symbol(entryLabel(*F)));
+      C.imm(And, TagIPMask);
+    } else {
+      // A byte address: the offset need not be a whole cell.
+      C.imm(Dupr, int64_t(GlobalWords.lookup(
+                      cast<GlobalVariable>(Op(1).getGlobal()))) *
+                          4 +
+                      Op(1).getOffset());
+    }
     C.store(word(Op(0)));
     break;
   case Squall::FIADDR:
@@ -932,6 +1014,8 @@ void SquallAsmPrinter::emitInstruction(const MachineInstr *MI) {
   }
   case Squall::CALL:
   case Squall::CALLR:
+  case Squall::CALLI:
+  case Squall::CALLIR:
     expandCall(C, *MI);
     break;
   case Squall::RET:

@@ -20,10 +20,12 @@ class SquallTargetMachine;
 FunctionPass *createSquallISelDag(SquallTargetMachine &TM,
                                   CodeGenOptLevel OptLevel);
 ModulePass *createSquallCheckIRPass();
+ModulePass *createSquallLowerMemoryPass();
 
 void initializeSquallDAGToDAGISelLegacyPass(PassRegistry &);
 void initializeSquallAsmPrinterPass(PassRegistry &);
 void initializeSquallCheckIRPass(PassRegistry &);
+void initializeSquallLowerMemoryPass(PassRegistry &);
 
 namespace Squall {
 /// Comparison kinds of the SETCC pseudo.

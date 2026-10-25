@@ -26,6 +26,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSquallTarget() {
   PassRegistry &PR = *PassRegistry::getPassRegistry();
   initializeSquallAsmPrinterPass(PR);
   initializeSquallCheckIRPass(PR);
+  initializeSquallLowerMemoryPass(PR);
   initializeSquallDAGToDAGISelLegacyPass(PR);
 }
 
@@ -59,6 +60,12 @@ public:
   void addIRPasses() override {
     addPass(createSquallCheckIRPass());
     TargetPassConfig::addIRPasses();
+  }
+  // Runs after the generic IR passes, so nothing creates new partial-cell
+  // stores afterwards.
+  bool addPreISel() override {
+    addPass(createSquallLowerMemoryPass());
+    return false;
   }
   bool addInstSelector() override {
     addPass(createSquallISelDag(getTM<SquallTargetMachine>(), getOptLevel()));

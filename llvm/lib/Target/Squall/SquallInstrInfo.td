@@ -60,8 +60,8 @@ def SDT_SquallRet : SDTypeProfile<0, 1, [SDTCisVT<0, i32>]>;
 def SDT_SquallWrapper : SDTypeProfile<1, 1, [SDTCisSameAs<0, 1>,
                                              SDTCisPtrTy<0>]>;
 
-// Direct calls without and with a returned value. The operands are the
-// callee followed by the argument values.
+// Calls without and with a returned value. The operands are the callee, a
+// function or a function pointer, followed by the argument values.
 def SquallCall : SDNode<"SquallISD::CALL", SDT_SquallCall,
                         [SDNPHasChain, SDNPVariadic, SDNPSideEffect,
                          SDNPMayLoad, SDNPMayStore]>;
@@ -194,9 +194,12 @@ let isBranch = 1, isTerminator = 1 in {
   def BRZ : SquallPseudo<(outs), (ins GPR:$c, brtarget:$t)>;
 }
 
+// Direct calls name the callee; indirect calls read a function pointer.
 let isCall = 1, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in {
   def CALL : SquallPseudo<(outs), (ins calltarget:$f, variable_ops)>;
   def CALLR : SquallPseudo<(outs GPR:$d), (ins calltarget:$f, variable_ops)>;
+  def CALLI : SquallPseudo<(outs), (ins GPR:$f, variable_ops)>;
+  def CALLIR : SquallPseudo<(outs GPR:$d), (ins GPR:$f, variable_ops)>;
 }
 
 let isReturn = 1, isTerminator = 1, isBarrier = 1 in {

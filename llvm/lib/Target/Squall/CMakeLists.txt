@@ -16,6 +16,7 @@ add_llvm_target(SquallCodeGen
   SquallFrameLowering.cpp
   SquallISelDAGToDAG.cpp
   SquallISelLowering.cpp
+  SquallLowerMemory.cpp
   SquallInstrInfo.cpp
   SquallRegisterInfo.cpp
   SquallSelectionDAGInfo.cpp
@@ -35,6 +36,7 @@ add_llvm_target(SquallCodeGen
   Support
   Target
   TargetParser
+  TransformUtils
 
   ADD_TO_COMPONENT
   Squall

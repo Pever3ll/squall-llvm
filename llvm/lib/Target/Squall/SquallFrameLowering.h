@@ -26,6 +26,8 @@ public:
       : TargetFrameLowering(StackGrowsUp, Align(StackAlignBytes), 0) {}
 
   void emitPrologue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
+  void processFunctionBeforeFrameFinalized(MachineFunction &MF,
+                                           RegScavenger *RS) const override;
   void emitEpilogue(MachineFunction &, MachineBasicBlock &) const override {}
 
 protected:
