@@ -89,6 +89,7 @@ def verify(build):
     run([build / "unittests/TargetParser/TargetParserTests"])
     run([sys.executable, build / "bin/llvm-lit", "-v",
          ROOT / "clang/test/Preprocessor/squall.c", ROOT / "clang/test/CodeGen/squall.c",
+         ROOT / "clang/test/Driver/squall-toolchain.c",
          ROOT / "llvm/test/CodeGen/Squall", ROOT / "llvm/test/MC/Squall"])
     run([sys.executable, build / "bin/llvm-lit", "-q", "-j", "4",
          ROOT / "llvm/test/Assembler", ROOT / "llvm/test/Verifier",

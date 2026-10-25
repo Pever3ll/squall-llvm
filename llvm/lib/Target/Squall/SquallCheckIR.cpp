@@ -153,8 +153,9 @@ class SquallCheckIR : public ModulePass {
         if (Callee && !Callee->isIntrinsic() && Callee->isDeclaration())
           fail(F,
                Twine("call to '") + Callee->getName() +
-                   "' has no definition in this module; Squall has no "
-                   "linker or runtime library",
+                   "' has no definition in this program; Squall has no runtime "
+                   "library, "
+                   "so every function must be compiled into the image",
                Loc);
       }
       // A function pointer is its target's entry word, so the target must be
@@ -166,8 +167,9 @@ class SquallCheckIR : public ModulePass {
               &Op == &cast<CallInst>(I).getCalledOperandUse()))
           fail(F,
                Twine("'") + Target->getName() +
-                   "' has no definition in this module; Squall has no "
-                   "linker or runtime library",
+                   "' has no definition in this program; Squall has no runtime "
+                   "library, "
+                   "so every function must be compiled into the image",
                Loc);
     }
   }
@@ -180,7 +182,8 @@ class SquallCheckIR : public ModulePass {
       return;
     }
     if (!G.hasInitializer())
-      fail(G, "external globals have no definition; Squall has no linker");
+      fail(G, "external globals must be defined in the program: link the "
+              "files that define them");
     else if (!isSupportedInitializer(G.getInitializer(), DL))
       fail(G, "initializers may contain only integers, null, addresses "
               "within global variables, and functions defined in this module");

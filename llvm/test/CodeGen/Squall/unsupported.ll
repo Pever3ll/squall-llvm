@@ -8,7 +8,7 @@
 
 ; ATOMIC: error: {{.*}}atomic operations are not supported on Squall
 ; ATOMIC-NOT: error
-; EXTERNAL: error: {{.*}}call to 'f' has no definition in this module
+; EXTERNAL: error: {{.*}}call to 'f' has no definition in this program
 ; EXTERNAL-NOT: error
 ; FLOAT: error: {{.*}}Squall return values must be integers
 ; ENTRY: error: Squall: entry function 'main' is not defined in this module

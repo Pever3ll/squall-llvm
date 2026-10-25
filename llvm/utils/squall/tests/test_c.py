@@ -2,6 +2,7 @@
 import ctypes
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -123,3 +124,35 @@ def test_seeded_programs(tmp_path, seed, level):
         result = run_image(image)
         assert result["quiescent"] and result["status"] == 1
         assert result["result"] == i32(oracle(value, count))
+
+
+LINKED = ["main.c", "inventory.c", "scoring.c"]
+
+
+@pytest.mark.parametrize("separate", [False, True], ids=["one-step", "separate"])
+@pytest.mark.parametrize("level", ["-O0", "-O1", "-O2"])
+def test_linked_program(tmp_path, level, separate):
+    """Three translation units linked into one image, compared with the same
+    program linked for the host."""
+    if not clang():
+        pytest.skip("the built Squall Clang is required")
+    sources = [str(EXAMPLES / "linked" / name) for name in LINKED]
+    library = tmp_path / "host.so"
+    subprocess.run([host_clang(), "-O0", "-shared", "-fPIC", *sources, "-o", str(library)], check=True)
+    inputs = sources
+    if separate:
+        inputs = []
+        for source in sources:
+            obj = tmp_path / (Path(source).stem + ".bc.o")
+            subprocess.run([clang(), "--target=squallv2", level, "-c", "-flto", source, "-o", str(obj)],
+                           check=True)
+            inputs.append(str(obj))
+    image = tmp_path / "program.o"
+    subprocess.run([clang(), "--target=squallv2", level, "-mllvm", "-squall-entry=run", *inputs,
+                    "-o", str(image)], check=True, capture_output=True, text=True)
+    for index, arguments in enumerate([(0, 0), (5, 1), (20, 2), (-3, 7)]):
+        function = fresh_function(tmp_path, library, "run", index)
+        function.argtypes, function.restype = [ctypes.c_int32] * 2, ctypes.c_uint32
+        load(image, tmp_path / f"run{index}", arguments)
+        result = run_image(tmp_path / f"run{index}")
+        assert result["status"] == 1 and result["result"] == i32(function(*arguments)), (arguments, result)

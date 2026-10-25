@@ -88,6 +88,7 @@ add_clang_library(clangDriver
   ToolChains/Serenity.cpp
   ToolChains/Solaris.cpp
   ToolChains/SPIRV.cpp
+  ToolChains/Squall.cpp
   ToolChains/SPIRVOpenMP.cpp
   ToolChains/SYCL.cpp
   ToolChains/TCE.cpp

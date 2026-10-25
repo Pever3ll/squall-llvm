@@ -125,8 +125,9 @@ SDValue SquallTargetLowering::lowerGlobalAddress(SDValue Op,
       F && F->isDeclaration()) {
     unsupported(DAG, DL,
                 Twine("'") + F->getName() +
-                    "' has no definition in this module; Squall has no "
-                    "linker or runtime library");
+                    "' has no definition in this program; Squall has no "
+                    "runtime library, "
+                    "so every function must be compiled into the image");
     return DAG.getConstant(0, DL, MVT::i32);
   }
   SDValue Target =
@@ -322,8 +323,9 @@ SquallTargetLowering::LowerCall(CallLoweringInfo &CLI,
   if (!Undefined.empty()) {
     unsupported(DAG, DL,
                 Twine("call to '") + Undefined +
-                    "' has no definition in this module; Squall has no "
-                    "linker or runtime library");
+                    "' has no definition in this program; Squall has no "
+                    "runtime library, "
+                    "so every function must be compiled into the image");
     for (const ISD::InputArg &In : CLI.Ins)
       InVals.push_back(DAG.getUNDEF(In.VT));
     return CLI.Chain;
