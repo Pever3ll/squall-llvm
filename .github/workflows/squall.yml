@@ -1,0 +1,108 @@
+name: Squall backend
+
+on:
+  push:
+    paths:
+      - 'llvm/lib/Target/Squall/**'
+      - 'llvm/lib/TargetParser/**'
+      - 'llvm/test/CodeGen/Squall/**'
+      - 'llvm/test/MC/Squall/**'
+      - 'llvm/utils/squall/**'
+      - '.github/workflows/squall.yml'
+  pull_request:
+    paths:
+      - 'llvm/lib/Target/Squall/**'
+      - 'llvm/lib/TargetParser/**'
+      - 'llvm/test/CodeGen/Squall/**'
+      - 'llvm/test/MC/Squall/**'
+      - 'llvm/utils/squall/**'
+      - '.github/workflows/squall.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TOOLS: llc llvm-config llvm-mc llvm-objcopy llvm-objdump llvm-readobj llvm-nm FileCheck not count split-file
+
+jobs:
+  llvm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            llvm
+            cmake
+            third-party
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build
+          python -m pip install -e './llvm/utils/squall[test]'
+      - name: Build the Squall LLVM tools
+        run: |
+          python llvm/utils/squall/build.py --build-dir "$GITHUB_WORKSPACE/build" \
+            --llvm-only --static-tools --jobs 4 $(printf -- '--target %s ' $TOOLS)
+      - name: LLVM lit tests
+        run: python build/bin/llvm-lit -v llvm/test/MC/Squall llvm/test/CodeGen/Squall
+      - name: Execution tests on the Zig reference interpreter
+        env:
+          SQUALL_LLVM_BIN: ${{ github.workspace }}/build/bin
+        # C tests need the Squall Clang, which this LLVM-only build omits.
+        run: python -m pytest -q llvm/utils/squall/tests --junitxml=results.xml
+      - name: Package tools for the RTL job
+        run: tar -czf squall-tools.tar.gz -C build/bin $TOOLS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: squall-llvm-tools
+          path: squall-tools.tar.gz
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: squall-test-results
+          path: results.xml
+
+  rtl:
+    # The pinned RTL repository is private; enable after provisioning access.
+    needs: llvm
+    if: ${{ vars.SQUALL_RTL_ENABLED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: llvm/utils/squall
+      - name: Check out the pinned processor revision
+        uses: actions/checkout@v4
+        with:
+          repository: Jbalkind/isacomp
+          token: ${{ secrets.ISACOMP_READ_TOKEN }}
+          ref: 899ee4456cabd88deb7d2ab1088ad721178dfb8b
+          path: isacomp-rtl
+          submodules: false
+      - name: Initialize the pinned HPDcache
+        working-directory: isacomp-rtl
+        run: git submodule update --init vendor/cv-hpdcache
+      - uses: actions/download-artifact@v4
+        with:
+          name: squall-llvm-tools
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install simulators
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iverilog verilator
+          python -m pip install -e './llvm/utils/squall[test]'
+          mkdir tools && tar -xzf squall-tools.tar.gz -C tools
+      - name: Compiler-generated images on baseline, pipelined and production RTL
+        env:
+          SQUALL_LLVM_BIN: ${{ github.workspace }}/tools
+          SQUALL_ISACOMP_DIR: ${{ github.workspace }}/isacomp-rtl
+        run: python -m pytest -q llvm/utils/squall/tests/test_rtl.py

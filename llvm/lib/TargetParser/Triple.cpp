@@ -363,7 +363,7 @@ StringRef Triple::getArchTypePrefix(ArchType Kind) {
     return "sparc";
 
   case squall:
-    return "sqaull";
+    return "squall";
 
   case systemz:
     return "s390";
@@ -700,7 +700,7 @@ Triple::ArchType Triple::parseArch(StringRef ArchName) {
           .Case("sparc", Triple::sparc)
           .Case("sparcel", Triple::sparcel)
           .Cases({"sparcv9", "sparc64"}, Triple::sparcv9)
-          .Case("squall", Triple::squall)
+          .Cases({"squall", "squallv2"}, Triple::squall)
           .Case("tce", Triple::tce)
           .Case("tcele", Triple::tcele)
           .Case("tcele64", Triple::tcele64)
@@ -2139,6 +2139,7 @@ Triple Triple::getBigEndianArchVariant() const {
     return T;
   switch (getArch()) {
   case Triple::UnknownArch:
+  case Triple::squall:
   case Triple::amdgpu:
   case Triple::amdil64:
   case Triple::amdil:
@@ -2272,6 +2273,7 @@ Triple Triple::getLittleEndianArchVariant() const {
 
 bool Triple::isLittleEndian() const {
   switch (getArch()) {
+  case Triple::squall:
   case Triple::aarch64:
   case Triple::aarch64_32:
   case Triple::amdgpu:
