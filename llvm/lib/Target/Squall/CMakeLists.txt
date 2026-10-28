@@ -12,6 +12,10 @@ tablegen(LLVM SquallGenSubtargetInfo.inc -gen-subtarget)
 
 add_public_tablegen_target(SquallCommonTableGen)
 
+include_directories(
+  ${CMAKE_CURRENT_BINARY_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
 add_subdirectory(AsmParser)
 add_subdirectory(MCTargetDesc)
 add_subdirectory(TargetInfo)

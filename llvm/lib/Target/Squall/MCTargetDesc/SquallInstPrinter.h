@@ -16,12 +16,10 @@ public:
                  const MCSubtargetInfo &STI, raw_ostream &O) override;
   void printRegName(raw_ostream &O, MCRegister Reg) const override {}
 
-  // Generated.
   void printInstruction(const MCInst *MI, uint64_t Address,
                         const MCSubtargetInfo &STI, raw_ostream &O);
   static const char *getRegisterName(MCRegister Reg) { return ""; }
 
-  // Custom PrintMethods.
   void printPort(const MCInst *MI, unsigned OpNo, const MCSubtargetInfo &STI,
                  raw_ostream &O);
   void printSecondPort(const MCInst *MI, unsigned OpNo,

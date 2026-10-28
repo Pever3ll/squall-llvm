@@ -1,6 +1,7 @@
 add_llvm_component_library(LLVMSquallDesc
   SquallMCAsmInfo.cpp
   SquallMCExpr.cpp
+  SquallMCTargetDesc.cpp
   SquallInstPrinter.cpp
   SquallMCCodeEmitter.cpp
   SquallAsmBackend.cpp

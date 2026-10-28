@@ -18,7 +18,7 @@ void SquallInstPrinter::printInst(const MCInst *MI, uint64_t Address,
 
 void SquallInstPrinter::printPort(const MCInst *MI, unsigned OpNo,
                                   const MCSubtargetInfo &STI, raw_ostream &O) {
-  O << (MI->getOperand(OpNo).getImm() ? 'r' : 'l');
+  O << '.' << (MI->getOperand(OpNo).getImm() ? '.r' : '.l');
 }
 
 void SquallInstPrinter::printSecondPort(const MCInst *MI, unsigned OpNo,

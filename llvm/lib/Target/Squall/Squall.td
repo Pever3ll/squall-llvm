@@ -8,7 +8,11 @@ include "llvm/Target/Target.td"
 // Registers - Squall is a dataflow machine with no architectural registers,
 // but MCRegisterInfo must exist, so declare an empty class.
 //===----------------------------------------------------------------------===//
-def SquallRegClass : RegisterClass<"Squall", [i64], 64, (add)>;
+def DUMMY : Register<"dummy">;
+
+def SquallRegClass : RegisterClass<"Squall", [i64], 64, (add DUMMY)>;
+
+defm : RemapAllTargetPseudoPointerOperands<SquallRegClass>;
 
 //===----------------------------------------------------------------------===//
 // Instruction info

@@ -7,6 +7,7 @@ add_llvm_component_library(LLVMSquallAsmParser
   SquallDesc
   SquallInfo
   Support
+  TargetParser
 
   ADD_TO_COMPONENT
   Squall

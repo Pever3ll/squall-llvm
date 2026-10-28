@@ -23,9 +23,9 @@ class SquallInstr<dag outs, dag ins, string asmstr, list<dag> pattern,
 class GenInstr<dag outs, dag ins, string asmstr, list<dag> pattern>
         : SquallInstr<outs, ins, asmstr, pattern> {
     bit port;
-    bits<20> idest;
+    bits<20> dst;
     let Inst{63} = port;
-    let Inst{62-43} = idest;
+    let Inst{62-43} = dst;
 }
 
 class MonadicInstr<dag outs, dag ins, string asmstr, list<dag> pattern>
@@ -88,8 +88,8 @@ class MonadicALU<dag outs, dag ins, string asmstr, list<dag> pattern,
 //===----------------------------------------------------------------------===//
 
 class ExtractInstr<string asmstr, list<dag> pattern>
-        : DyadicInstr<(outs), (ins idest:$dst, port:$p,
-                                ipayload:$ipay, second_port:$p2,
+        : DyadicInstr<(outs), (ins idest:$dst, port:$port,
+                                ipayload:$ipayload, port:$portm,
                                 fdest:$slot), asmstr, pattern> {
     bit portm;
     bits<20> ipayload;
@@ -104,7 +104,7 @@ class ExtractInstr<string asmstr, list<dag> pattern>
 //===----------------------------------------------------------------------===//
 
 class SendInstr<string asmstr, list<dag> pattern>
-        : DyadicInstr<(outs), (ins idest:$dst, port:$p,
+        : DyadicInstr<(outs), (ins idest:$dst, port:$port,
                                 fdest:$slot), asmstr, pattern> {
     let dyad_type  = 0b11;
     let Inst{25-2} = 0;
@@ -113,25 +113,25 @@ class SendInstr<string asmstr, list<dag> pattern>
 multiclass ALUOp<string mn, bits<6> opc> {
     let mr = 0 in
     def _D  : DyadicALU<(outs),
-                      (ins idest:$dst, port:$p, second_port:$p2s,
+                      (ins idest:$dst, port:$port, second_port:$p2s,
                            fdest:$slot),
-                      mn # "\t$dst.$p$p2s $slot", [], opc>;
+                      mn # "\t$dst$port$p2s $slot", [], opc>;
 
     let mr = 2 in
     def _DR  : DyadicALU<(outs),
-                      (ins idest:$dst, port:$p, second_port:$p2s,
+                      (ins idest:$dst, port:$port, second_port:$p2s,
                            fdest:$slot),
-                      mn # ".r\t$dst.$p$p2s $slot", [], opc>;
+                      mn # ".r\t$dst$port$p2s $slot", [], opc>;
 
     let mr = 1 in
     def _DC  : DyadicALU<(outs),
-                      (ins idest:$dst, port:$p, second_port:$p2s,
+                      (ins idest:$dst, port:$port, second_port:$p2s,
                            fdest:$slot),
-                      mn # ".c\t$dst.$p$p2s $slot", [], opc>;
+                      mn # ".c\t$dst$port$p2s $slot", [], opc>;
     def _M   : MonadicALU<(outs),
-                      (ins idest:$dst, port:$p, second_port:$p2s,
+                      (ins idest:$dst, port:$port, second_port:$p2s,
                            simm32:$imm),
-                      mn # "\t$dst.$p$p2s #$imm", [], opc>;
+                      mn # "\t$dst$port$p2s #$imm", [], opc>;
 }
 
 

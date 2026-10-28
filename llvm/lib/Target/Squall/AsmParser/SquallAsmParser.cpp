@@ -13,7 +13,7 @@
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
-#include "llvm/MC/MCParser/MCAsmLexer.h"
+#include "llvm/MC/MCParser/AsmLexer.h"
 #include "llvm/MC/MCParser/MCAsmParser.h"
 #include "llvm/MC/MCParser/MCParsedAsmOperand.h"
 #include "llvm/MC/MCParser/MCTargetAsmParser.h"
@@ -238,7 +238,7 @@ class SquallAsmParser : public MCTargetAsmParser {
   MCAsmParser &Parser;
 
   MCAsmParser &getParser() const { return Parser; }
-  MCAsmLexer &getLexer() const { return Parser.getLexer(); }
+  AsmLexer &getLexer() const { return Parser.getLexer(); }
   SMLoc getLoc() const { return getParser().getTok().getLoc(); }
 
   bool parseOperand(OperandVector &Operands, StringRef Mnemonic);
@@ -305,7 +305,7 @@ public:
 /// beginning with '.', depending on what preceded it. Handle both.
 ParseStatus SquallAsmParser::parsePort(OperandVector &Operands) {
   SMLoc S = getLoc();
-  MCAsmLexer &Lex = getLexer();
+  AsmLexer &Lex = getLexer();
   StringRef Letter;
   SMLoc E;
 
@@ -347,7 +347,7 @@ ParseStatus SquallAsmParser::parsePort(OperandVector &Operands) {
 /// consequence: symbols literally named 'l' or 'r' cannot be used as an
 /// absolute fdest, because this parser claims them first.
 ParseStatus SquallAsmParser::parseSecondPort(OperandVector &Operands) {
-  MCAsmLexer &Lex = getLexer();
+  AsmLexer &Lex = getLexer();
 
   if (Lex.isNot(AsmToken::Identifier))
     return ParseStatus::NoMatch;
@@ -382,7 +382,7 @@ std::unique_ptr<SquallOperand> SquallAsmParser::defaultSecondPort() const {
 /// the encoder by wrapping the expression in a SquallMCExpr.
 ParseStatus SquallAsmParser::parseIDest(OperandVector &Operands) {
   SMLoc S = getLoc();
-  MCAsmLexer &Lex = getLexer();
+  AsmLexer &Lex = getLexer();
   bool Paren = false;
 
   if (Lex.is(AsmToken::LParen)) {
@@ -418,7 +418,7 @@ ParseStatus SquallAsmParser::parseIDest(OperandVector &Operands) {
 /// determines addr's signedness.
 ParseStatus SquallAsmParser::parseFDest(OperandVector &Operands) {
   SMLoc S = getLoc();
-  MCAsmLexer &Lex = getLexer();
+  AsmLexer &Lex = getLexer();
 
   unsigned At;
   AsmToken::TokenKind Closer = AsmToken::Eof; // Eof = no closer expected
@@ -482,7 +482,7 @@ ParseStatus SquallAsmParser::parsePtr(OperandVector &Operands) {
 /// one with an absolute fdest, since both otherwise end in a bare integer.
 ParseStatus SquallAsmParser::parseSImm32(OperandVector &Operands) {
   SMLoc S = getLoc();
-  MCAsmLexer &Lex = getLexer();
+  AsmLexer &Lex = getLexer();
 
   if (Lex.isNot(AsmToken::Hash))
     return ParseStatus::NoMatch;

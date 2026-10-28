@@ -50,24 +50,24 @@ defm BEQR : ALUOp<"beqr", 34>;
 
 
 let mr = 0 in
-def EXTR    : ExtractInstr<"extr\t$dst.$p $ipay.$p2 $slot", []>;
+def EXTR    : ExtractInstr<"extr\t$dst$port $ipayload$portm $slot", []>;
 
 let mr = 2 in
-def EXTR_R  : ExtractInstr<"extr.r\t$dst.$p $ipay.$p2 $slot", []>;
+def EXTR_R  : ExtractInstr<"extr.r\t$dst$port $ipayload$portm $slot", []>;
 
 let mr = 1 in
-def EXTR_C  : ExtractInstr<"extr.c\t$dst.$p $ipay.$p2 $slot", []>;
+def EXTR_C  : ExtractInstr<"extr.c\t$dst$port $ipayload$portm $slot", []>;
 
 
 
 let mr = 0 in
-def SEND    : SendInstr<"send\t$dst.$p $slot", []>;
+def SEND    : SendInstr<"send\t$dst$port $slot", []>;
 
 let mr = 2 in
-def SEND_R  : SendInstr<"send.r\t$dst.$p $slot", []>;
+def SEND_R  : SendInstr<"send.r\t$dst$port $slot", []>;
 
 let mr = 1 in
-def SEND_C  : SendInstr<"send.c\t$dst.$p $slot", []>;
+def SEND_C  : SendInstr<"send.c\t$dst$port $slot", []>;
 
 //===----------------------------------------------------------------------===//
 // WRITE:  write <ptr>
