@@ -2,6 +2,7 @@
 #include "SquallMCExpr.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCValue.h"
 
@@ -16,14 +17,13 @@ const SquallMCExpr *SquallMCExpr::create(const MCExpr *Expr, VariantKind Kind,
 
 void SquallMCExpr::printImpl(raw_ostream &OS, const MCAsmInfo *MAI) const {
   OS << '(';
-  Expr->print(OS, MAI);
+  MCOperand::createExpr(Expr).print(OS);
   OS << ')';
 }
 
 bool SquallMCExpr::evaluateAsRelocatableImpl(MCValue &Res,
-                                             const MCAssembler *Asm,
-                                             const MCFixup *Fixup) const {
-  if (!getSubExpr()->evaluateAsRelocatable(Res, Asm, Fixup))
+                                             const MCAssembler *Asm) const {
+  if (!getSubExpr()->evaluateAsRelocatable(Res, Asm))
     return false;
   // The relative-vs-absolute choice is consumed by the code emitter when it
   // picks a fixup kind; nothing to fold here.

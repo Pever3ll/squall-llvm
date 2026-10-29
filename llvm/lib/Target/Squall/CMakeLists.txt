@@ -23,6 +23,7 @@ add_subdirectory(TargetInfo)
 
 add_llvm_target(SquallCodeGen
   SquallTargetMachine.cpp
+  SquallRegisterInfo.cpp
 
   LINK_COMPONENTS
   CodeGen Core MC SquallDesc SquallInfo Support Target

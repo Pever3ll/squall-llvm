@@ -35,8 +35,6 @@ class MCInstPrinter;
 class MCRegisterInfo;
 class raw_ostream;
 
-/// Instances of this class represent operands of the MCInst class.
-/// This is a simple discriminated union.
 class MCOperand {
   enum MachineOperandType : unsigned char {
     kInvalid,      ///< Uninitialized.
@@ -248,12 +246,12 @@ public:
                             const MCContext *Ctx = nullptr) const;
 };
 
-inline raw_ostream& operator<<(raw_ostream &OS, const MCOperand &MO) {
+inline raw_ostream &operator<<(raw_ostream &OS, const MCOperand &MO) {
   MO.print(OS);
   return OS;
 }
 
-inline raw_ostream& operator<<(raw_ostream &OS, const MCInst &MI) {
+inline raw_ostream &operator<<(raw_ostream &OS, const MCInst &MI) {
   MI.print(OS);
   return OS;
 }

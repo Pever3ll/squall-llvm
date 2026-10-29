@@ -7,7 +7,13 @@
 
 #include "MCTargetDesc/SquallMCExpr.h"
 #include "MCTargetDesc/SquallMCTargetDesc.h"
+#include "SquallRegisterInfo.h"
+#define GET_INSTRINFO_ENUM
+#include "SquallGenInstrInfo.inc"
+
+#include "SquallGenAsmMatcher.inc"
 #include "TargetInfo/SquallTargetInfo.h"
+#include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/MC/MCContext.h"
@@ -154,6 +160,11 @@ public:
       Inst.addOperand(MCOperand::createExpr(Imm.Val));
   }
 
+  void addRegOperands(MCInst &Inst, unsigned OpNo) const {
+    assert(isReg() && "Expected a register operand");
+    Inst.addOperand(MCOperand::createReg(getReg()));
+  }
+
   void addIDestOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "idest renders as one operand");
     if (const auto *CE = dyn_cast<MCConstantExpr>(IDest.Val))
@@ -211,20 +222,23 @@ public:
     return Op;
   }
 
-  void print(raw_ostream &OS) const override {
+  void print(raw_ostream &OS, const MCAsmInfo &MAI) const override {
     switch (Kind) {
     case k_Token:
       OS << "Token:" << getToken();
       break;
     case k_Imm:
-      OS << "Imm:" << *Imm.Val;
+      OS << "Imm:" << getImm();
       break;
     case k_IDest:
-      OS << "IDest:" << *IDest.Val
-         << (IDest.Parenthesised ? " (paren)" : " (bare)");
+      OS << "IDest:";
+      MCOperand::createExpr(IDest.Val).print(OS);
+      OS << (IDest.Parenthesised ? " (paren)" : " (bare)");
       break;
     case k_FDest:
-      OS << "FDest:" << *FDest.Addr << " at=" << FDest.At;
+      OS << "FDest:";
+      MCOperand::createExpr(IDest.Val).print(OS);
+      OS << " at=" << FDest.At;
       break;
     }
   }
@@ -248,18 +262,18 @@ class SquallAsmParser : public MCTargetAsmParser {
 
 public:
   SquallAsmParser(const MCSubtargetInfo &STI, MCAsmParser &P,
-                  const MCInstrInfo &MII, const MCTargetOptions &Options)
-      : MCTargetAsmParser(Options, STI, MII), Parser(P) {
+                  const MCInstrInfo &MII)
+      : MCTargetAsmParser(STI, MII), Parser(P) {
     MCAsmParserExtension::Initialize(P);
     setAvailableFeatures(ComputeAvailableFeatures(STI.getFeatureBits()));
   }
 
   //--- MCTargetAsmParser interface ---------------------------------------
 
-  bool ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
+  bool parseInstruction(ParseInstructionInfo &Info, StringRef Name,
                         SMLoc NameLoc, OperandVector &Operands) override;
 
-  bool MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
+  bool matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                                OperandVector &Operands, MCStreamer &Out,
                                uint64_t &ErrorInfo,
                                bool MatchingInlineAsm) override;
@@ -275,6 +289,11 @@ public:
 
   bool ParseDirective(AsmToken DirectiveID) override { return true; }
 
+  void convertToMCInst(unsigned Opcode, MCInst &Inst, unsigned &FixupFlags,
+                       const OperandVector &Operands,
+                       const SmallBitVector &OptionalOperandsMask,
+                       const MCSubtargetInfo &STI) const;
+
   //--- Custom ParserMethods ----------------------------------------------
 
   ParseStatus parsePort(OperandVector &Operands);
@@ -286,7 +305,18 @@ public:
 
   //--- DefaultMethod for second_port's IsOptional ------------------------
 
-  std::unique_ptr<SquallOperand> defaultSecondPort() const;
+  std::unique_ptr<SquallOperand> defaultSecondPort();
+
+  enum SquallMatchResultTy {
+    Match_Invalid,
+    Match_InvalidIDest,
+    Match_InvalidPort,
+    Match_InvalidSecondPort,
+    Match_InvalidIPayload,
+    Match_InvalidFDest,
+    Match_InvalidPtr,
+    Match_InvalidSImm32,
+  };
 };
 
 } // end anonymous namespace
@@ -369,7 +399,7 @@ ParseStatus SquallAsmParser::parseSecondPort(OperandVector &Operands) {
   return ParseStatus::Success;
 }
 
-std::unique_ptr<SquallOperand> SquallAsmParser::defaultSecondPort() const {
+std::unique_ptr<SquallOperand> SquallAsmParser::defaultSecondPort() {
   return SquallOperand::createImm(MCConstantExpr::create(0, getContext()),
                                   SMLoc(), SMLoc());
 }
@@ -527,7 +557,7 @@ bool SquallAsmParser::parseOperand(OperandVector &Operands,
   return Error(getLoc(), "unexpected token in operand list");
 }
 
-bool SquallAsmParser::ParseInstruction(ParseInstructionInfo &Info,
+bool SquallAsmParser::parseInstruction(ParseInstructionInfo &Info,
                                        StringRef Name, SMLoc NameLoc,
                                        OperandVector &Operands) {
   // The matching-rule suffix (.r / .c) is folded into the mnemonic by the
@@ -552,7 +582,7 @@ bool SquallAsmParser::ParseInstruction(ParseInstructionInfo &Info,
   return false;
 }
 
-bool SquallAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
+bool SquallAsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                                               OperandVector &Operands,
                                               MCStreamer &Out,
                                               uint64_t &ErrorInfo,
@@ -623,4 +653,10 @@ bool SquallAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
 
 extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSquallAsmParser() {
   RegisterMCAsmParser<SquallAsmParser> X(getTheSquallTarget());
+}
+
+MCTargetAsmParser *llvm::createSquallMCAsmParser(const MCSubtargetInfo &STI,
+                                                 MCAsmParser &P,
+                                                 const MCInstrInfo &MII) {
+  return new SquallAsmParser(STI, P, MII);
 }

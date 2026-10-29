@@ -2,6 +2,7 @@
 #ifndef LLVM_LIB_TARGET_SQUALL_MCTARGETDESC_SQUALLINSTPRINTER_H
 #define LLVM_LIB_TARGET_SQUALL_MCTARGETDESC_SQUALLINSTPRINTER_H
 
+#include "MCTargetDesc/SquallMCTargetDesc.h"
 #include "llvm/MC/MCInstPrinter.h"
 
 namespace llvm {
@@ -14,12 +15,16 @@ public:
 
   void printInst(const MCInst *MI, uint64_t Address, StringRef Annot,
                  const MCSubtargetInfo &STI, raw_ostream &O) override;
-  void printRegName(raw_ostream &O, MCRegister Reg) const override {}
+  std::pair<const char *, uint64_t>
+  getMnemonic(const MCInst &MI) const override;
 
   void printInstruction(const MCInst *MI, uint64_t Address,
                         const MCSubtargetInfo &STI, raw_ostream &O);
-  static const char *getRegisterName(MCRegister Reg) { return ""; }
+  bool printAliasInstr(const MCInst *MI, uint64_t Address,
+                       const MCSubtargetInfo &STI, raw_ostream &O);
+  static const char *getRegisterName(MCRegister Reg);
 
+  // Custom PrintMethods.
   void printPort(const MCInst *MI, unsigned OpNo, const MCSubtargetInfo &STI,
                  raw_ostream &O);
   void printSecondPort(const MCInst *MI, unsigned OpNo,
@@ -35,5 +40,4 @@ public:
 };
 
 } // namespace llvm
-
 #endif
