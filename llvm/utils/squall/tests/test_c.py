@@ -1,6 +1,8 @@
 """C compiled by the built Squall Clang, checked against native host execution."""
 import ctypes
+import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -33,6 +35,34 @@ CASES = {
         "matrix_product": [()],
         "initialized_local": [(0,), (3,)],
     },
+    "bytes.c": {
+        "string_length": [(0,), (3,), (9,)],
+        "reverse": [(0,), (5,)],
+        "concatenate": [(0,), (1,), (2,), (3,)],
+        "sort_letters": [(0,), (6,), (13,)],
+        "signed_bytes": [(0,), (100,), (-77,)],
+        "shorts": [(1,), (-3,)],
+        "records_by_value": [(0,), (4,)],
+        "packed_fields": [(0,), (12345,)],
+        "adjacent_bytes": [(3,), (-91,)],
+        "variable_copies": [(0,), (13,), (29,), (38,)],
+        "wide_division": [(12345, 67), (-99999, 13), (2147483647, -1), (-2147483648, 0)],
+    },
+    "callbacks.c": {
+        "dispatch": [(0, 7, 5), (1, 7, 5), (2, -7, 5), (3, 2, 9), (7, 4, 4)],
+        "folds": [(0,), (3,), (-5,)],
+        "handler_table": [(0,), (4,), (-3,)],
+        "sort_with": [(1,), (2,), (13,)],
+        "recursive_pointer": [(0,), (17,), (100,)],
+        "returned_pointer": [(0,), (1,), (2,), (5,)],
+    },
+    "parallel.c": {
+        "chains": [(0,), (1,), (37,)],
+        "horner": [(0,), (5,), (-12,)],
+        "sum_and_hash": [(0,), (3,), (-9,)],
+        "call_beside_arithmetic": [(0,), (27,), (-5,)],
+        "two_frame_arrays": [(0,), (9,), (-100,)],
+    },
     "programs.c": {
         "points": [(0,), (3,), (-7,)],
         "classify": [(0,), (2,), (7,), (-3,), (100,)],
@@ -50,24 +80,33 @@ def host_library(tmp_path, source):
     return ctypes.CDLL(str(library))
 
 
-def compile_c(tmp_path, source, entry, level):
+def fresh_function(tmp_path, library, entry, index):
+    """A host function from a private copy of the library: some examples
+    modify globals, and every Squall image starts from the initial values."""
+    copy = tmp_path / f"host-{entry}-{index}.so"
+    shutil.copy(library, copy)
+    return getattr(ctypes.CDLL(str(copy)), entry)
+
+
+def compile_c(tmp_path, source, entry, level, options=()):
     obj = tmp_path / f"{entry}{level}.o"
     subprocess.run([clang(), "--target=squallv2", level, "-c", "-mllvm", f"-squall-entry={entry}",
-                    str(source), "-o", str(obj)], check=True, capture_output=True, text=True)
+                    *options, str(source), "-o", str(obj)], check=True, capture_output=True, text=True)
     return obj
 
 
+@pytest.mark.parametrize("options", [(), ("-mllvm", "-squall-fork-join")], ids=["serial", "fork-join"])
 @pytest.mark.parametrize("level", ["-O0", "-O1", "-O2"])
 @pytest.mark.parametrize("source", list(CASES))
-def test_examples_match_native_execution(tmp_path, source, level):
+def test_examples_match_native_execution(tmp_path, source, level, options):
     if not clang():
         pytest.skip("the built Squall Clang is required")
     path = EXAMPLES / source
-    host = host_library(tmp_path, path)
+    host_library(tmp_path, path)
     for entry, inputs in CASES[source].items():
-        obj = compile_c(tmp_path, path, entry, level)
-        function = getattr(host, entry)
+        obj = compile_c(tmp_path, path, entry, level, options)
         for index, arguments in enumerate(inputs):
+            function = fresh_function(tmp_path, tmp_path / "host.so", entry, index)
             function.argtypes = [ctypes.c_int32] * len(arguments)
             function.restype = ctypes.c_uint32
             image = tmp_path / f"{entry}{level}-{index}"
@@ -93,3 +132,35 @@ def test_seeded_programs(tmp_path, seed, level):
         result = run_image(image)
         assert result["quiescent"] and result["status"] == 1
         assert result["result"] == i32(oracle(value, count))
+
+
+LINKED = ["main.c", "inventory.c", "scoring.c"]
+
+
+@pytest.mark.parametrize("separate", [False, True], ids=["one-step", "separate"])
+@pytest.mark.parametrize("level", ["-O0", "-O1", "-O2"])
+def test_linked_program(tmp_path, level, separate):
+    """Three translation units linked into one image, compared with the same
+    program linked for the host."""
+    if not clang():
+        pytest.skip("the built Squall Clang is required")
+    sources = [str(EXAMPLES / "linked" / name) for name in LINKED]
+    library = tmp_path / "host.so"
+    subprocess.run([host_clang(), "-O0", "-shared", "-fPIC", *sources, "-o", str(library)], check=True)
+    inputs = sources
+    if separate:
+        inputs = []
+        for source in sources:
+            obj = tmp_path / (Path(source).stem + ".bc.o")
+            subprocess.run([clang(), "--target=squallv2", level, "-c", "-flto", source, "-o", str(obj)],
+                           check=True)
+            inputs.append(str(obj))
+    image = tmp_path / "program.o"
+    subprocess.run([clang(), "--target=squallv2", level, "-mllvm", "-squall-entry=run", *inputs,
+                    "-o", str(image)], check=True, capture_output=True, text=True)
+    for index, arguments in enumerate([(0, 0), (5, 1), (20, 2), (-3, 7)]):
+        function = fresh_function(tmp_path, library, "run", index)
+        function.argtypes, function.restype = [ctypes.c_int32] * 2, ctypes.c_uint32
+        load(image, tmp_path / f"run{index}", arguments)
+        result = run_image(tmp_path / f"run{index}")
+        assert result["status"] == 1 and result["result"] == i32(function(*arguments)), (arguments, result)

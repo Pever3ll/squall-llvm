@@ -8,11 +8,13 @@
 
 #include "SquallRegisterInfo.h"
 #include "MCTargetDesc/SquallMCTargetDesc.h"
+#include "Squall.h"
 #include "SquallFrameLowering.h"
 #include "SquallMachineFunctionInfo.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
+#include "llvm/IR/Function.h"
 
 using namespace llvm;
 
@@ -29,9 +31,14 @@ SquallRegisterInfo::getCalleeSavedRegs(const MachineFunction *) const {
   return None;
 }
 
-BitVector SquallRegisterInfo::getReservedRegs(const MachineFunction &) const {
+BitVector SquallRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
   Reserved.set(Squall::FP);
+  // va_arg reads unnamed arguments from their registers' frame words at any
+  // point in a variadic function, so the allocator must not reuse them.
+  if (MF.getFunction().isVarArg())
+    for (unsigned I = 0; I < Squall::NumArgRegs; ++I)
+      Reserved.set(Squall::GPRRegClass.getRegister(I));
   return Reserved;
 }
 

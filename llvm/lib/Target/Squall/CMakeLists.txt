@@ -13,9 +13,13 @@ add_public_tablegen_target(SquallCommonTableGen)
 add_llvm_target(SquallCodeGen
   SquallAsmPrinter.cpp
   SquallCheckIR.cpp
+  SquallForkJoin.cpp
   SquallFrameLowering.cpp
+  SquallLowerAlloca.cpp
+  SquallLowerFloat.cpp
   SquallISelDAGToDAG.cpp
   SquallISelLowering.cpp
+  SquallLowerMemory.cpp
   SquallInstrInfo.cpp
   SquallRegisterInfo.cpp
   SquallSelectionDAGInfo.cpp
@@ -35,6 +39,7 @@ add_llvm_target(SquallCodeGen
   Support
   Target
   TargetParser
+  TransformUtils
 
   ADD_TO_COMPONENT
   Squall

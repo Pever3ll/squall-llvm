@@ -33,6 +33,9 @@ void SquallFrameLowering::emitPrologue(MachineFunction &MF,
     if (MRI.isPhysRegUsed(Reg))
       UsedRegs = std::max<unsigned>(UsedRegs, TRI->getEncodingValue(Reg) -
                                                   Squall::FirstRegWord + 1);
+  // Reserved argument registers of a variadic function hold its arguments.
+  if (MF.getFunction().isVarArg())
+    UsedRegs = std::max(UsedRegs, Squall::NumArgRegs);
   if (MFI.getMaxAlign() > getStackAlign())
     MF.getFunction().getContext().diagnose(DiagnosticInfoUnsupported(
         MF.getFunction(),
@@ -46,4 +49,14 @@ void SquallFrameLowering::emitPrologue(MachineFunction &MF,
     MF.getFunction().getContext().diagnose(DiagnosticInfoUnsupported(
         MF.getFunction(), "Squall activation frame exceeds 2000 words"));
   MF.getInfo<SquallMachineFunctionInfo>()->setLayout(Base, Words);
+}
+
+// Frame slots are four-byte cells, and narrow accesses rely on every object
+// starting on a cell boundary.
+void SquallFrameLowering::processFunctionBeforeFrameFinalized(
+    MachineFunction &MF, RegScavenger *) const {
+  MachineFrameInfo &MFI = MF.getFrameInfo();
+  for (int FI = MFI.getObjectIndexBegin(); FI != MFI.getObjectIndexEnd(); ++FI)
+    if (!MFI.isDeadObjectIndex(FI))
+      MFI.setObjectAlignment(FI, std::max(MFI.getObjectAlign(FI), Align(4)));
 }

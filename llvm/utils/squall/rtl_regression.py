@@ -45,6 +45,34 @@ CASES = {
         "matrix_product": [()],
         "initialized_local": [(0,), (1,), (2,), (3,)],
     },
+    "bytes.c": {
+        "string_length": [(0,), (9,)],
+        "reverse": [(5,)],
+        "concatenate": [(0,), (3,)],
+        "sort_letters": [(6,)],
+        "signed_bytes": [(-77,)],
+        "shorts": [(-3,)],
+        "records_by_value": [(4,)],
+        "packed_fields": [(12345,)],
+        "adjacent_bytes": [(-91,)],
+        "variable_copies": [(13,), (29,)],
+        "wide_division": [(-99999, 13), (-2147483648, 0)],
+    },
+    "callbacks.c": {
+        "dispatch": [(1, 7, 5), (3, 2, 9)],
+        "folds": [(3,)],
+        "handler_table": [(4,)],
+        "sort_with": [(1,), (2,)],
+        "recursive_pointer": [(17,)],
+        "returned_pointer": [(0,), (5,)],
+    },
+    "parallel.c": {
+        "chains": [(1,), (37,)],
+        "horner": [(5,), (-12,)],
+        "sum_and_hash": [(3,)],
+        "call_beside_arithmetic": [(27,)],
+        "two_frame_arrays": [(9,)],
+    },
     "programs.c": {
         "points": [(0,), (3,), (-7,)],
         "classify": [(0,), (2,), (7,), (-3,), (100,)],
@@ -75,6 +103,8 @@ def main():
     parser.add_argument("--host-clang", default=shutil.which("clang"), help="independent host C compiler")
     parser.add_argument("--variants", nargs="+", choices=VARIANTS, default=list(VARIANTS))
     parser.add_argument("--latencies", nargs="+", type=int, default=[0, 5, 11])
+    parser.add_argument("--fork-join", action="store_true",
+                        help="compile with -squall-fork-join (parallel lanes)")
     args = parser.parse_args()
     if args.reference_dir:
         os.environ["SQUALL_REFERENCE_DIR"] = str(args.reference_dir.resolve())
@@ -100,7 +130,8 @@ def main():
     def key(variant, latency, seed, jitter):
         return f"{variant}-lat{latency}" + (f"-seed{seed}-jitter{jitter}" if jitter else "")
 
-    report = {"compiler": "llvm squall backend", "optimization": args.opt, "configurations": {}, "runs": []}
+    report = {"compiler": "llvm squall backend", "optimization": args.opt, "fork_join": args.fork_join,
+              "configurations": {}, "runs": []}
     for configuration in configurations:
         print(f"Building {key(*configuration)}", flush=True)
         report["configurations"][key(*configuration)] = build_simulator(
@@ -111,17 +142,21 @@ def main():
         source = sources[source_name]
         library = output / f"{source.stem}-host.so"
         subprocess.run([args.host_clang, "-O0", "-shared", "-fPIC", str(source), "-o", str(library)], check=True)
-        host = ctypes.CDLL(str(library))
         for level in args.opt:
             for entry, inputs in entries.items():
                 obj = output / "objects" / f"{source.stem}{level}-{entry}.o"
                 obj.parent.mkdir(parents=True, exist_ok=True)
+                fork = ["-mllvm", "-squall-fork-join"] if args.fork_join else []
                 subprocess.run([tools["clang"], "--target=squallv2", level, "-c", "-mllvm",
-                                f"-squall-entry={entry}", str(source), "-o", str(obj)], check=True)
-                function = getattr(host, entry)
-                function.restype = ctypes.c_uint32
-                for arguments in inputs:
+                                f"-squall-entry={entry}", *fork, str(source), "-o", str(obj)], check=True)
+                for index, arguments in enumerate(inputs):
                     case_count += 1
+                    # A private copy per run: some examples modify globals.
+                    copy = output / "host" / f"{source.stem}{level}-{entry}-{index}.so"
+                    copy.parent.mkdir(exist_ok=True)
+                    shutil.copy(library, copy)
+                    function = getattr(ctypes.CDLL(str(copy)), entry)
+                    function.restype = ctypes.c_uint32
                     function.argtypes = [ctypes.c_int32] * len(arguments)
                     expected = signed32(function(*arguments))
                     name = f"{source.stem}{level}-{entry}-" + "_".join(map(str, arguments))
@@ -154,6 +189,7 @@ def main():
     lines = ["# Squall backend RTL regression", "",
              f"{case_count} cases; {len(report['runs'])} RTL runs; {report['failures']} failures.", "",
              "Images were compiled by the built Squall Clang at " + ", ".join(args.opt) +
+             (" with -squall-fork-join" if args.fork_join else "") +
              ". Expected answers came from the same C compiled for the host and run natively. "
              "Cycle counts are simulation counts, not silicon measurements.", "",
              "| Configuration | Passed | Useful tokens | Core cycles |", "| --- | ---: | ---: | ---: |"]

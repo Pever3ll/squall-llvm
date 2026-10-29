@@ -1,3 +1,4 @@
+import json
 """LLVM IR compiled by llc, executed on the independent Zig interpreter."""
 import operator
 
@@ -324,6 +325,36 @@ def test_memory_range_guard(tmp_path, offset):
       }}""", [offset], status=3)
 
 
+# A memory lane beside an arithmetic lane (-squall-fork-join). A guard that
+# fails in one lane halts the program; the other lane stops at the join.
+LANE_GUARD = """@value = global [4 x i32] [i32 11, i32 22, i32 33, i32 44]
+define i32 @main(i32 %i, i32 %b) {
+  %p = getelementptr i32, ptr @value, i32 %i
+  %v = load i32, ptr %p, align 4
+  %v2 = mul i32 %v, 3
+  %v3 = xor i32 %v2, 5
+  %b1 = mul i32 %b, 22695477
+  %b2 = lshr i32 %b1, 7
+  %b3 = xor i32 %b2, %b1
+  %r = add i32 %v3, %b3
+  ret i32 %r
+}"""
+
+
+def lane_guard_expected(i, b):
+    v = [11, 22, 33, 44][i] * 3 ^ 5
+    b1 = (b * 22695477) & 0xFFFFFFFF
+    return i32(v + ((b1 >> 7) ^ b1))
+
+
+@pytest.mark.parametrize("i,status", [(1, 1), (3, 1), (-16, 3), (65536, 3), (536870911, 3)])
+def test_memory_guard_inside_parallel_lane(tmp_path, opt, i, status):
+    result = execute(tmp_path, LANE_GUARD, [i, 77], lane_guard_expected(i, 77) if status == 1 else None,
+                     status=status, opt=opt, options=["-squall-fork-join"])
+    manifest = json.loads((tmp_path / "image/manifest.json").read_text())
+    assert manifest["parallel_lanes"], "the load and the arithmetic should form two lanes"
+
+
 def test_memset_and_memcpy(tmp_path, opt):
     execute(tmp_path, """declare void @llvm.memset.p0.i32(ptr, i8, i32, i1)
     declare void @llvm.memcpy.p0.p0.i32(ptr, ptr, i32, i1)
@@ -412,7 +443,9 @@ define i32 @main(i32 %alo, i32 %ahi, i32 %blo, i32 %bhi) {
 }"""
 
 
-@pytest.mark.parametrize("op", ["add", "sub", "mul", "and", "xor", "shl", "lshr", "ashr"])
+# Division is expanded into IR loops: there is no runtime library.
+@pytest.mark.parametrize("op", ["add", "sub", "mul", "and", "xor", "shl", "lshr", "ashr",
+                                "sdiv", "udiv", "srem", "urem"])
 def test_64_bit_integers(tmp_path, op, opt):
     build = compile_ir(tmp_path / "build", WIDE.replace("OP", op), [0, 0, 0, 0], opt=opt).parent
     mask = (1 << 64) - 1
@@ -421,11 +454,114 @@ def test_64_bit_integers(tmp_path, op, opt):
         if op in ("shl", "lshr", "ashr"):
             b %= 64
         signed = a - (1 << 64) if a >> 63 else a
+        signed_b = b - (1 << 64) if b >> 63 else b
         r = {"add": lambda: a + b, "sub": lambda: a - b, "mul": lambda: a * b,
              "and": lambda: a & b, "xor": lambda: a ^ b, "shl": lambda: a << b,
-             "lshr": lambda: a >> b, "ashr": lambda: signed >> b}[op]() & mask
+             "lshr": lambda: a >> b, "ashr": lambda: signed >> b,
+             "sdiv": lambda: signed_div(signed, signed_b), "udiv": lambda: a // b,
+             "srem": lambda: signed - signed_div(signed, signed_b) * signed_b,
+             "urem": lambda: a % b}[op]() & mask
         expected = i32((r & 0xffffffff) + 3 * (r >> 32))
         load(build / "image.o", tmp_path / f"run{index}",
              [i32(a), i32(a >> 32), i32(b), i32(b >> 32)])
         result = run_image(tmp_path / f"run{index}")
         assert result["status"] == 1 and result["result"] == expected, (a, b, result)
+
+
+# Byte memory: a value of each width is stored at each byte offset of a
+# patterned buffer, then read back; a checksum of every cell shows that the
+# neighboring bytes are intact. "dynamic" passes the address through a
+# noinline call so the byte position is computed at run time.
+NARROW = """@g = global [16 x i8] zeroinitializer
+declare void @llvm.memset.p0.i32(ptr, i8, i32, i1)
+define void @put(ptr %p, TYPE %v) noinline {
+  store TYPE %v, ptr %p, align ALIGN
+  ret void
+}
+define i32 @get(ptr %p) noinline {
+  %v = load TYPE, ptr %p, align ALIGN
+  %r = EXTEND
+  ret i32 %r
+}
+define i32 @main(i32 %value, i32 %offset) {
+  call void @llvm.memset.p0.i32(ptr align 4 @g, i8 -91, i32 16, i1 false)
+  %v = TRUNC
+  ACCESS
+  %c0 = load i32, ptr @g
+  %c1 = load i32, ptr getelementptr (i8, ptr @g, i32 4)
+  %c2 = load i32, ptr getelementptr (i8, ptr @g, i32 8)
+  %c3 = load i32, ptr getelementptr (i8, ptr @g, i32 12)
+  %s1 = mul i32 %c0, 31
+  %t1 = add i32 %s1, %c1
+  %s2 = mul i32 %t1, 31
+  %t2 = add i32 %s2, %c2
+  %s3 = mul i32 %t2, 31
+  %t3 = add i32 %s3, %c3
+  %x = xor i32 %r, %t3
+  ret i32 %x
+}"""
+
+NARROW_CASES = [(bits, offset, align, extend)
+                for bits in (8, 16, 32)
+                for offset in range(8)
+                for align in sorted({1, bits // 8})
+                if offset % align == 0
+                for extend in (("sext", "zext") if bits < 32 else ("none",))]
+
+
+@pytest.mark.parametrize("dynamic", [False, True], ids=["static", "dynamic"])
+@pytest.mark.parametrize("bits,offset,align,extend", NARROW_CASES)
+def test_narrow_and_misaligned_memory(tmp_path, bits, offset, align, extend, dynamic, opt):
+    t = f"i{bits}"
+    access = ("%p = getelementptr i8, ptr @g, i32 %offset\n"
+              "  call void @put(ptr %p, TYPE %v)\n  %r = call i32 @get(ptr %p)") if dynamic else (
+              f"%p = getelementptr i8, ptr @g, i32 {offset}\n"
+              "  store TYPE %v, ptr %p, align ALIGN\n  %w = load TYPE, ptr %p, align ALIGN\n"
+              "  %r = EXTEND_W")
+    ir = (NARROW.replace("ACCESS", access)
+          .replace("EXTEND_W", f"{extend} {t} %w to i32" if bits < 32 else "add i32 %w, 0")
+          .replace("EXTEND", f"{extend} {t} %v to i32" if bits < 32 else "add i32 %v, 0")
+          .replace("TRUNC", f"trunc i32 %value to {t}" if bits < 32 else "add i32 %value, 0")
+          .replace("TYPE", t).replace("ALIGN", str(align)))
+    build = compile_ir(tmp_path / "build", ir, [0, 0], opt=opt).parent
+    size = bits // 8
+    for index, value in enumerate([0x1234abcd, -1, 0x80, -0x7f7f7f80]):
+        memory = bytearray([0xa5] * 16)
+        memory[offset:offset + size] = (value & ((1 << bits) - 1)).to_bytes(size, "little")
+        loaded = int.from_bytes(memory[offset:offset + size], "little", signed=extend != "zext")
+        checksum = 0
+        for cell in range(4):
+            checksum = checksum * 31 + int.from_bytes(memory[4 * cell:4 * cell + 4], "little")
+        load(build / "image.o", tmp_path / f"run{index}", [i32(value), offset])
+        result = run_image(tmp_path / f"run{index}")
+        assert result["status"] == 1 and result["result"] == i32(loaded ^ checksum), (value, result)
+
+
+def test_byte_initializers_and_interior_pointers(tmp_path, opt):
+    execute(tmp_path, """@s = global [6 x i8] c"hello\\00"
+    @p = global ptr getelementptr (i8, ptr @s, i32 2)
+    @mix = global { i8, i16, i8, i32 } { i8 -1, i16 -300, i8 7, i32 123456 }
+    @packed = global <{ i8, i32, i16 }> <{ i8 3, i32 -559038737, i16 4660 }>
+    define i32 @main() {
+      %q = load ptr, ptr @p
+      %c = load i8, ptr %q
+      %c32 = zext i8 %c to i32
+      %a = load i8, ptr @mix
+      %a32 = sext i8 %a to i32
+      %b = load i16, ptr getelementptr (i8, ptr @mix, i32 2)
+      %b32 = sext i16 %b to i32
+      %d = load i8, ptr getelementptr (i8, ptr @mix, i32 4)
+      %d32 = zext i8 %d to i32
+      %e = load i32, ptr getelementptr (i8, ptr @mix, i32 8)
+      %f = load i32, ptr getelementptr (i8, ptr @packed, i32 1), align 1
+      %h = load i16, ptr getelementptr (i8, ptr @packed, i32 5), align 1
+      %h32 = zext i16 %h to i32
+      %s1 = add i32 %c32, %a32
+      %s2 = add i32 %s1, %b32
+      %s3 = mul i32 %d32, 1000
+      %s4 = add i32 %s2, %s3
+      %s5 = add i32 %s4, %e
+      %s6 = xor i32 %s5, %f
+      %s7 = add i32 %s6, %h32
+      ret i32 %s7
+    }""", expected=i32((((108 - 1 - 300 + 7000 + 123456) ^ -559038737) + 4660)), opt=opt)

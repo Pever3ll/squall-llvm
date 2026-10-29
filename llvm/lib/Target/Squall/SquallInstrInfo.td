@@ -60,8 +60,8 @@ def SDT_SquallRet : SDTypeProfile<0, 1, [SDTCisVT<0, i32>]>;
 def SDT_SquallWrapper : SDTypeProfile<1, 1, [SDTCisSameAs<0, 1>,
                                              SDTCisPtrTy<0>]>;
 
-// Direct calls without and with a returned value. The operands are the
-// callee followed by the argument values.
+// Calls without and with a returned value. The operands are the callee, a
+// function or a function pointer, followed by the argument values.
 def SquallCall : SDNode<"SquallISD::CALL", SDT_SquallCall,
                         [SDNPHasChain, SDNPVariadic, SDNPSideEffect,
                          SDNPMayLoad, SDNPMayStore]>;
@@ -194,12 +194,29 @@ let isBranch = 1, isTerminator = 1 in {
   def BRZ : SquallPseudo<(outs), (ins GPR:$c, brtarget:$t)>;
 }
 
+// Direct calls name the callee; indirect calls read a function pointer.
 let isCall = 1, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in {
   def CALL : SquallPseudo<(outs), (ins calltarget:$f, variable_ops)>;
   def CALLR : SquallPseudo<(outs GPR:$d), (ins calltarget:$f, variable_ops)>;
+  def CALLI : SquallPseudo<(outs), (ins GPR:$f, variable_ops)>;
+  def CALLIR : SquallPseudo<(outs GPR:$d), (ins GPR:$f, variable_ops)>;
 }
+
+// Halts the program with the trap status (__builtin_trap, abort, assert).
+let hasSideEffects = 1 in
+def TRAP : SquallPseudo<(outs), (ins), [(trap)]>;
 
 let isReturn = 1, isTerminator = 1, isBarrier = 1 in {
   def RET : SquallPseudo<(outs), (ins), [(SquallRetVoid)]>;
   def RETV : SquallPseudo<(outs), (ins GPR:$v), [(SquallRet GPR:$v)]>;
+}
+
+// Parallel lanes (SquallForkJoin): FORK id; lane A; LANE id; lane B;
+// JOIN id, slot. The unique id keeps branch folding from merging parts of
+// different regions; slot is 0 for the shared join word, or 1 + the index of
+// a reserved call join word.
+let hasSideEffects = 1, isNotDuplicable = 1 in {
+  def FORK : SquallPseudo<(outs), (ins i32imm:$id)>;
+  def LANE : SquallPseudo<(outs), (ins i32imm:$id)>;
+  def JOIN : SquallPseudo<(outs), (ins i32imm:$id, i32imm:$slot)>;
 }

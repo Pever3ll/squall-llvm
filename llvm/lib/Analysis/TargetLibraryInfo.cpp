@@ -148,6 +148,13 @@ static void initializeLibCalls(TargetLibraryInfoImpl &TLI, const Triple &T,
     return;
   }
 
+  // Squall images are closed: there is no C library to call, so passes must
+  // not turn loops into calls such as strlen or memcmp.
+  if (T.getArch() == Triple::squall) {
+    TLI.disableAllFunctions();
+    return;
+  }
+
   // DXIL does not support libcalls, and disabling them here prevents a number
   // of passes from introducing libcalls into DXIL which would otherwise
   // complicate lowering/legalization

@@ -4,6 +4,8 @@ LLVM and Clang with a backend for the Squall v2 explicit-token-store dataflow
 processor. `clang --target=squallv2` and `llc -mtriple=squallv2` produce complete
 Squall memory images through the standard SelectionDAG, register allocation,
 and MC pipeline; `llvm-mc` assembles and disassembles the team assembly syntax.
+C programs may use byte memory and function pointers and span several files,
+which the driver links as bitcode before generating the image.
 
 Build instructions, the code generation design, the assembly syntax, the test
 harness, and current limitations are documented in

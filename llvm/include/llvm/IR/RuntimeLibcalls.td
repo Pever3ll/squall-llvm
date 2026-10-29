@@ -3160,6 +3160,15 @@ def SPARCSystemLibrary
 >;
 
 //===----------------------------------------------------------------------===//
+// Squall Runtime Libcalls
+//===----------------------------------------------------------------------===//
+
+def isSquall : RuntimeLibcallPredicate<"TT.getArch() == Triple::squall">;
+
+// No calls: images are closed, and the backend expands everything it supports.
+def SquallSystemLibrary : SystemRuntimeLibrary<isSquall, (add)>;
+
+//===----------------------------------------------------------------------===//
 // SPIRV Runtime Libcalls
 //===----------------------------------------------------------------------===//
 

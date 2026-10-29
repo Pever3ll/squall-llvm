@@ -11,6 +11,7 @@
 #include "SquallSelectionDAGInfo.h"
 #include "SquallTargetMachine.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
+#include "llvm/IR/GlobalVariable.h"
 
 using namespace llvm;
 
@@ -78,6 +79,8 @@ bool SquallDAGToDAGISel::selectAddrG(SDValue Addr, SDValue &Global) {
   if (Addr.getOpcode() != SquallISD::WRAPPER)
     return false;
   auto *G = cast<GlobalAddressSDNode>(Addr.getOperand(0));
+  if (!isa<GlobalVariable>(G->getGlobal()))
+    return false;
   Bytes += G->getOffset();
   if (Bytes < 0 || Bytes % 4)
     return false;
@@ -92,10 +95,12 @@ void SquallDAGToDAGISel::selectCall(SDNode *N) {
     Ops.push_back(N->getOperand(I));
   Ops.push_back(N->getOperand(0)); // Chain.
   bool HasResult = N->getOpcode() == SquallISD::CALLR;
+  bool Direct = isa<GlobalAddressSDNode>(Ops.front());
   SDVTList VTs = HasResult ? CurDAG->getVTList(MVT::i32, MVT::Other)
                            : CurDAG->getVTList(MVT::Other);
-  MachineSDNode *Call = CurDAG->getMachineNode(
-      HasResult ? Squall::CALLR : Squall::CALL, SDLoc(N), VTs, Ops);
+  unsigned Opcode = Direct ? (HasResult ? Squall::CALLR : Squall::CALL)
+                           : (HasResult ? Squall::CALLIR : Squall::CALLI);
+  MachineSDNode *Call = CurDAG->getMachineNode(Opcode, SDLoc(N), VTs, Ops);
   ReplaceNode(N, Call);
 }
 

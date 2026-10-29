@@ -19,7 +19,7 @@ public:
     PointerWidth = 32;
 
     // C sizes are logical: the backend stores each four-byte cell of memory in
-    // one 64-bit matching slot. Byte-sized memory accesses are rejected.
+    // one 64-bit matching slot, and builds byte accesses from cell accesses.
     TLSSupported = false;
     resetDataLayout(Triple.computeDataLayout());
   }

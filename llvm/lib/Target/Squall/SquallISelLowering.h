@@ -37,7 +37,20 @@ public:
                       const SmallVectorImpl<SDValue> &OutVals, const SDLoc &DL,
                       SelectionDAG &DAG) const override;
 
-  // Narrowing a cell load would create byte memory accesses.
+  // Memory is written a whole cell at a time. SquallLowerMemory has already
+  // turned partial-cell stores into ordered cell updates; combines must not
+  // narrow those back into stores that would each need a read-modify-write.
+  bool allowsMemoryAccess(LLVMContext &Context, const DataLayout &DL, EVT VT,
+                          unsigned AddrSpace, Align Alignment,
+                          MachineMemOperand::Flags Flags,
+                          unsigned *Fast) const override {
+    if ((Flags & MachineMemOperand::MOStore) && VT.getStoreSize() < 4)
+      return false;
+    return TargetLowering::allowsMemoryAccess(Context, DL, VT, AddrSpace,
+                                              Alignment, Flags, Fast);
+  }
+
+  // A narrow load costs a cell load plus extraction; keep the full cell.
   bool shouldReduceLoadWidth(SDNode *, ISD::LoadExtType, EVT,
                              std::optional<unsigned>) const override {
     return false;
@@ -46,6 +59,11 @@ public:
   // Calls are selected directly; no call frame pseudos are needed because a
   // callee's frame is addressed relative to the caller's final frame size.
   bool mayBeEmittedAsTailCall(const CallInst *) const override { return false; }
+
+private:
+  SDValue lowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const;
+  SDValue lowerNarrowLoad(SDValue Op, SelectionDAG &DAG) const;
+  SDValue lowerNarrowStore(SDValue Op, SelectionDAG &DAG) const;
 };
 
 } // namespace llvm

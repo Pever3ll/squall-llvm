@@ -7,22 +7,24 @@
 //===----------------------------------------------------------------------===//
 //
 // Squall memory consists of 64-bit matching slots. The backend maps each
-// four-byte logical cell to one slot, so pointers are four times a word
-// address; an i64 occupies two cells. Byte-granular memory, floating point,
-// atomics, and code outside the module cannot be represented. This pass
-// reports such constructs with source locations before instruction selection,
-// instead of letting legalization fail later. Failing modules are emptied and
-// marked, so code generation completes quietly after the diagnostics.
+// four-byte little-endian cell to one slot, so a byte address is four times a
+// word address plus the byte's position in the cell. Atomics and code outside
+// the program cannot be represented; floating point has been rewritten into
+// runtime calls by SquallLowerFloat, apart from values that are only moved.
+// This pass reports such constructs with source locations before instruction
+// selection, instead of letting legalization fail later. Failing modules have
+// their function bodies replaced and are marked, so code generation completes
+// quietly after the diagnostics.
 //
 //===----------------------------------------------------------------------===//
 
 #include "Squall.h"
+#include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
 
@@ -48,55 +50,61 @@ class SquallCheckIR : public ModulePass {
   static bool isValueType(const Type *T) {
     if (T->isPointerTy())
       return T->getPointerAddressSpace() == 0;
+    // Software floating point: SelectionDAG softens the values that remain.
+    if (T->isFloatTy() || T->isDoubleTy())
+      return true;
     return T->isIntegerTy() && T->getIntegerBitWidth() <= 64;
   }
-  static bool isCellType(const Type *T) {
-    return T->isIntegerTy(32) || T->isIntegerTy(64) ||
-           (T->isPointerTy() && T->getPointerAddressSpace() == 0);
-  }
-  /// Memory types must decompose into four-byte cells with no padding.
-  static bool isCellAggregate(const Type *T, const DataLayout &DL) {
-    if (isCellType(T))
+  /// Integers, pointers, and arrays and structs of them.
+  static bool isMemoryType(const Type *T) {
+    if (isValueType(T))
       return true;
     if (const auto *A = dyn_cast<ArrayType>(T))
-      return isCellAggregate(A->getElementType(), DL);
-    if (const auto *S = dyn_cast<StructType>(T)) {
-      const StructLayout *L = DL.getStructLayout(const_cast<StructType *>(S));
-      uint64_t Next = 0;
-      for (unsigned I = 0; I < S->getNumElements(); ++I) {
-        if (!isCellAggregate(S->getElementType(I), DL) ||
-            L->getElementOffset(I) != Next)
-          return false;
-        Next += DL.getTypeAllocSize(S->getElementType(I));
-      }
-      return L->getSizeInBytes() == Next;
-    }
+      return isMemoryType(A->getElementType());
+    if (const auto *S = dyn_cast<StructType>(T))
+      return !S->isOpaque() && all_of(S->elements(), isMemoryType);
     return false;
   }
-  static bool isSupportedInitializer(const Constant *C) {
-    if (isa<ConstantInt>(C) || isa<ConstantPointerNull>(C) ||
-        isa<ConstantAggregateZero>(C) || isa<UndefValue>(C) ||
-        isa<GlobalVariable>(C))
+  static bool isSupportedInitializer(const Constant *C, const DataLayout &DL) {
+    if (isa<ConstantInt>(C) || isa<ConstantFP>(C) ||
+        isa<ConstantPointerNull>(C) || isa<ConstantAggregateZero>(C) ||
+        isa<UndefValue>(C) || isa<GlobalVariable>(C))
       return true;
+    if (const auto *F = dyn_cast<Function>(C))
+      return !F->isDeclaration();
+    // The address of a global variable plus a constant offset.
+    GlobalValue *GV;
+    APInt Offset;
+    if (isa<ConstantExpr>(C) &&
+        IsConstantOffsetFromGlobal(const_cast<Constant *>(C), GV, Offset, DL))
+      return isa<GlobalVariable>(GV) && C->getType()->isPointerTy();
     if (isa<ConstantDataSequential>(C) || isa<ConstantAggregate>(C)) {
       unsigned N = isa<ConstantDataSequential>(C)
                        ? cast<ConstantDataSequential>(C)->getNumElements()
                        : C->getNumOperands();
       for (unsigned I = 0; I != N; ++I)
-        if (!isSupportedInitializer(C->getAggregateElement(I)))
+        if (!isSupportedInitializer(C->getAggregateElement(I), DL))
           return false;
       return true;
     }
     return false;
   }
 
+  /// The C library and the soft-float builtins are linked into a program
+  /// only when clang links it; a single `clang -c` module has neither.
+  static std::string undefined(StringRef Name) {
+    return ("'" + Name +
+            "' has no definition in this program; the Squall runtime library "
+            "is linked only when clang links the program, without -c")
+        .str();
+  }
+
   void checkMemoryAccess(const Function &F, const Instruction &I, Type *T,
-                         Align A, bool Atomic) {
-    if (!isCellType(T))
-      fail(F, "Squall memory accesses must be i32, i64 or pointer values",
-           I.getDebugLoc());
-    if (A < Align(4))
-      fail(F, "Squall memory accesses must be four-byte aligned",
+                         bool Atomic) {
+    if (!isMemoryType(T))
+      fail(F,
+           "Squall memory accesses must be integers, pointers, float, or "
+           "double",
            I.getDebugLoc());
     // Volatile accesses need no special treatment: expanded code runs with a
     // single control token, in program order.
@@ -104,47 +112,31 @@ class SquallCheckIR : public ModulePass {
       fail(F, "atomic accesses are not supported on Squall", I.getDebugLoc());
   }
 
-  void checkMemIntrinsic(const Function &F, const MemIntrinsic &MI) {
-    auto *Length = dyn_cast<ConstantInt>(MI.getLength());
-    bool Aligned = MI.getDestAlign().valueOrOne() >= Align(4);
-    if (const auto *Transfer = dyn_cast<MemTransferInst>(&MI))
-      Aligned &= Transfer->getSourceAlign().valueOrOne() >= Align(4);
-    if (!Length || Length->getValue().ugt(1024) || Length->getZExtValue() % 4 ||
-        !Aligned)
-      fail(F,
-           "Squall memory intrinsics need a constant length that is a "
-           "multiple of four bytes up to 1024, and four-byte alignment",
-           MI.getDebugLoc());
-  }
-
   void checkFunction(const Function &F) {
-    if (F.isVarArg())
-      fail(F, "variadic functions are not supported on Squall");
     if (F.arg_size() > Squall::NumArgRegs)
       fail(F, "Squall functions take at most 16 arguments");
     for (const Argument &A : F.args())
       if (!isValueType(A.getType()) || A.hasInAllocaAttr() ||
           A.hasPreallocatedAttr() ||
-          (A.hasByValAttr() &&
-           !isCellAggregate(A.getParamByValType(), F.getDataLayout())))
+          (A.hasByValAttr() && !isMemoryType(A.getParamByValType())))
         fail(F, "Squall arguments must be integers of at most 64 bits, "
-                "pointers, or byval aggregates of 32-bit cells");
+                "pointers, float, double, or byval aggregates of them");
     if (!F.getReturnType()->isVoidTy() && !isValueType(F.getReturnType()))
-      fail(F, "Squall return values must be integers of at most 64 bits or "
-              "pointers");
+      fail(F, "Squall return values must be integers of at most 64 bits, "
+              "pointers, float, or double");
     for (const Instruction &I : instructions(F)) {
       const DebugLoc &Loc = I.getDebugLoc();
       if (!I.getType()->isVoidTy() && !isValueType(I.getType()))
         fail(F,
              Twine("unsupported value type in '") + I.getOpcodeName() +
-                 "'; Squall supports integers of at most 64 bits and "
+                 "'; Squall supports integers of at most 64 bits, float, "
+                 "double, and "
                  "pointers",
              Loc);
       if (const auto *L = dyn_cast<LoadInst>(&I)) {
-        checkMemoryAccess(F, I, L->getType(), L->getAlign(), L->isAtomic());
+        checkMemoryAccess(F, I, L->getType(), L->isAtomic());
       } else if (const auto *S = dyn_cast<StoreInst>(&I)) {
-        checkMemoryAccess(F, I, S->getValueOperand()->getType(), S->getAlign(),
-                          S->isAtomic());
+        checkMemoryAccess(F, I, S->getValueOperand()->getType(), S->isAtomic());
       } else if (const auto *A = dyn_cast<AllocaInst>(&I)) {
         if (!A->isStaticAlloca())
           fail(F,
@@ -172,23 +164,17 @@ class SquallCheckIR : public ModulePass {
           continue;
         }
         const Function *Callee = Call->getCalledFunction();
-        if (!Callee) {
-          fail(F, "indirect calls are not supported on Squall", Loc);
-        } else if (const auto *MI = dyn_cast<MemIntrinsic>(Call)) {
-          checkMemIntrinsic(F, *MI);
-        } else if (!Callee->isIntrinsic() && Callee->isDeclaration()) {
-          fail(F,
-               Twine("call to '") + Callee->getName() +
-                   "' has no definition in this module; Squall has no "
-                   "linker or runtime library",
-               Loc);
-        }
+        if (Callee && !Callee->isIntrinsic() && Callee->isDeclaration())
+          fail(F, "call to " + undefined(Callee->getName()), Loc);
       }
+      // A function pointer is its target's entry word, so the target must be
+      // in this module.
       for (const Use &Op : I.operands())
-        if (isa<Function>(Op.get()) &&
+        if (const auto *Target = dyn_cast<Function>(Op.get());
+            Target && Target->isDeclaration() && !Target->isIntrinsic() &&
             !(isa<CallInst>(I) &&
               &Op == &cast<CallInst>(I).getCalledOperandUse()))
-          fail(F, "function pointers are not supported on Squall", Loc);
+          fail(F, undefined(Target->getName()), Loc);
     }
   }
 
@@ -200,15 +186,16 @@ class SquallCheckIR : public ModulePass {
       return;
     }
     if (!G.hasInitializer())
-      fail(G, "external globals have no definition; Squall has no linker");
-    else if (!isSupportedInitializer(G.getInitializer()))
-      fail(G, "initializers may contain only integers, null, and the "
-              "addresses of other globals");
+      fail(G, "external globals must be defined in the program: link the "
+              "files that define them");
+    else if (!isSupportedInitializer(G.getInitializer(), DL))
+      fail(G, "initializers may contain only integers, null, addresses "
+              "within global variables, and functions defined in this module");
     if (G.isThreadLocal() || G.getAddressSpace())
       fail(G, "thread-local and nondefault address space globals are not "
               "supported");
-    if (!isCellAggregate(G.getValueType(), DL))
-      fail(G, "global storage must consist of i32, i64 or pointer cells");
+    if (!isMemoryType(G.getValueType()))
+      fail(G, "global storage must consist of integers and pointers");
     if (G.getAlign().valueOrOne() > Align(4096))
       fail(G, "global alignment must be at most 4096 bytes");
   }
@@ -228,9 +215,14 @@ public:
     if (!Failed)
       return false;
     // The errors are reported; leave nothing for code generation to trip on.
+    // Bodies become unreachable rather than being deleted, because the image
+    // header, already emitted, refers to the functions.
     for (Function &F : M)
-      if (!F.isDeclaration())
-        F.deleteBody();
+      if (!F.isDeclaration()) {
+        F.dropAllReferences();
+        new UnreachableInst(M.getContext(),
+                            BasicBlock::Create(M.getContext(), "", &F));
+      }
     M.getOrInsertNamedMetadata("squall.invalid");
     return true;
   }

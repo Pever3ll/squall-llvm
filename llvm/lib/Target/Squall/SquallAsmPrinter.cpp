@@ -17,6 +17,7 @@
 //   (0)        halt destination; tokens sent here are discarded
 //   (1), (2)   result and status written by the host return stub
 //   (3)-(6)    mailboxes of the serial dynamic memory-access helper
+//   (7)        join slot of parallel lanes; empty between joins
 //   (8)-(15)   entry argument slots, written by the loader
 //   (16)...    globals, in module order
 //   (>=256)    runtime stubs, then functions
@@ -32,6 +33,7 @@
 #include "SquallMachineFunctionInfo.h"
 #include "SquallSubtarget.h"
 #include "TargetInfo/SquallTargetInfo.h"
+#include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/MachineInstr.h"
@@ -46,9 +48,12 @@
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Target/TargetMachine.h"
+#include <numeric>
+#include <set>
 
 using namespace llvm;
 
@@ -63,7 +68,6 @@ static cl::opt<uint64_t>
 static cl::opt<unsigned>
     StackTokens("squall-stack-tokens", cl::init(1024),
                 cl::desc("Token stack capacity of the Squall image"));
-
 namespace {
 
 // ALU operation numbers of the Squall v2 ISA.
@@ -90,9 +94,14 @@ enum MatchRule : unsigned { Once = 0, Const = 1, Read = 2 };
 enum Port : unsigned { Left = 0, Right = 1 };
 
 constexpr unsigned ResultWord = 1, StatusWord = 2, FirstMailbox = 3,
-                   ArgumentWord = 8, MaxEntryArgs = 8, FirstGlobalWord = 16,
-                   MinCodeWord = 256;
-constexpr int64_t StatusSuccess = 1, StatusDepth = 2, StatusMemory = 3;
+                   JoinWord = 7, ArgumentWord = 8, MaxEntryArgs = 8,
+                   FirstGlobalWord = 16, MinCodeWord = 256;
+constexpr int64_t StatusSuccess = 1, StatusDepth = 2, StatusMemory = 3,
+                  StatusTrap = 4;
+// A token tag packs the instruction word address in bits 0-28, the frame
+// pointer word in bits 29-57, and the entry port in bit 58.
+constexpr unsigned TagFPShift = 29;
+constexpr int64_t TagIPMask = (INT64_C(1) << TagFPShift) - 1;
 
 /// A matching-slot word holding a persistent constant: presence bits 0b10
 /// and a sign-extended 62-bit payload.
@@ -136,6 +145,7 @@ class Chain {
   SmallVector<Word, 24> Words;
   const MCSymbol *Halt;
   unsigned EndPort = Left; // Entry port of the word after the chain.
+  unsigned Scratch;        // Frame word for intermediate values.
 
   int nextAttached(int I) const {
     for (int J = I + 1, E = Words.size(); J < E; ++J)
@@ -174,7 +184,10 @@ class Chain {
   }
 
 public:
-  explicit Chain(const MCSymbol *Halt) : Halt(Halt) {}
+  explicit Chain(const MCSymbol *Halt, unsigned Scratch = Squall::ScratchWord)
+      : Halt(Halt), Scratch(Scratch) {}
+
+  unsigned scratch() const { return Scratch; }
 
   Word &operator[](int I) { return Words[I]; }
   int size() const { return Words.size(); }
@@ -298,10 +311,10 @@ public:
   /// resumes by reading it back.
   int captureSecondary(int Producer) {
     Words[Producer].Secondary = true;
-    int Capture = store(Squall::ScratchWord);
+    int Capture = store(Scratch);
     Words[Capture].D = Dest::symbol(Halt);
     Words[Capture].Detached = true;
-    int Resume = read(Squall::ScratchWord);
+    int Resume = read(Scratch);
     Words[Producer].D = Dest::item(Resume);
     return Resume;
   }
@@ -360,12 +373,22 @@ public:
 class SquallAsmPrinter : public AsmPrinter {
   DenseMap<const GlobalVariable *, unsigned> GlobalWords;
   const Function *Entry = nullptr;
-  MCSymbol *Halt = nullptr, *DepthError = nullptr, *MemoryError = nullptr;
+  MCSymbol *Halt = nullptr, *DepthError = nullptr, *MemoryError = nullptr,
+           *Trap = nullptr;
   uint64_t CodeStart = 0, FrameBase = 0, ArenaEnd = 0, StackBase = 0;
   /// The previous instruction's chain, held back so that a following read of
   /// the register it just stored can be dropped: the token still carries it.
   std::optional<Chain> Pending;
+  bool LaidOut = false;
+  unsigned GlobalBase = FirstGlobalWord; // First word of the globals.
+  void emitImageHeader(Module &M);
   unsigned HostReturnWord = 0, StartWord = 0;
+  /// Parallel lanes (see SquallForkJoin): the scratch word of the lane being
+  /// emitted, and the labels of each region's second lane and join.
+  unsigned Scratch = Squall::ScratchWord;
+  DenseMap<int64_t, std::pair<MCSymbol *, MCSymbol *>> Lanes;
+  bool Forked = false;              // Whether any lanes were emitted.
+  std::set<unsigned> UsedJoinWords; // Join words of the emitted lanes.
 
 public:
   static char ID;
@@ -374,9 +397,19 @@ public:
 
   StringRef getPassName() const override { return "Squall Assembly Printer"; }
 
-  void emitStartOfAsmFile(Module &M) override;
+  /// The image is laid out when the first function is emitted: the pass
+  /// manager initializes the printer before running the IR passes, and those
+  /// may add globals (SquallLowerAlloca) and delete functions
+  /// (SquallLowerFloat).
+  bool runOnMachineFunction(MachineFunction &MF) override {
+    if (!LaidOut) {
+      LaidOut = true;
+      emitImageHeader(*MF.getFunction().getParent());
+    }
+    return AsmPrinter::runOnMachineFunction(MF);
+  }
   void emitEndOfAsmFile(Module &M) override;
-  // Globals are placed with the image header in emitStartOfAsmFile.
+  // Globals are placed with the image header in emitImageHeader.
   void emitGlobalVariable(const GlobalVariable *) override {}
   void emitInstruction(const MachineInstr *MI) override;
   void emitBasicBlockEnd(const MachineBasicBlock &MBB) override;
@@ -402,13 +435,24 @@ private:
     return OutContext.getOrCreateSymbol(Twine(".Lsquall.entry.") +
                                         getSymbol(&F)->getName());
   }
-  void emitCells(const Constant *C, Type *T);
+  /// Function pointers in the initializer being emitted: cell, function.
+  SmallVector<std::pair<uint64_t, const Function *>, 4> FunctionCells;
+  /// Write a constant's little-endian bytes at Offset in Bytes.
+  void fillBytes(const Constant *C, const DataLayout &DL,
+                 MutableArrayRef<uint8_t> Bytes, uint64_t Offset);
+  /// Emit a global's initializer as constant slots, four bytes per cell.
+  void emitCells(const Constant *C, const DataLayout &DL);
   void expandBinary(Chain &C, const MachineInstr &MI, int Alu, bool Unsigned,
                     bool Normalize);
   void expandCompare(Chain &C, const MachineInstr &MI);
   void expandMemory(Chain &C, const MachineInstr &MI, bool IsStore,
                     std::optional<unsigned> PointerReg, int64_t Pointer);
   void expandCall(Chain &C, const MachineInstr &MI);
+  /// The chain of encoded words for one machine instruction.
+  Chain expand(const MachineInstr &MI, unsigned Scratch);
+  /// Emit a chain after the pending one, dropping a redundant first read.
+  void append(Chain C);
+  void emitLaneMarker(const MachineInstr &MI);
   json::Object manifest(const Module &M) const;
   void flush(unsigned Port) {
     if (!Pending)
@@ -423,44 +467,92 @@ private:
 
 unsigned SquallAsmPrinter::globalWord(const MachineOperand &MO) {
   const auto *G = cast<GlobalVariable>(MO.getGlobal());
+  assert(MO.getOffset() % 4 == 0 && "slot access must be a whole cell");
   return GlobalWords.lookup(G) + MO.getOffset() / 4;
 }
 
-void SquallAsmPrinter::emitCells(const Constant *C, Type *T) {
-  if (auto *A = dyn_cast<ArrayType>(T)) {
-    for (unsigned I = 0; I < A->getNumElements(); ++I)
-      emitCells(C->getAggregateElement(I), A->getElementType());
+void SquallAsmPrinter::fillBytes(const Constant *C, const DataLayout &DL,
+                                 MutableArrayRef<uint8_t> Bytes,
+                                 uint64_t Offset) {
+  if (isa<ConstantAggregateZero>(C) || isa<UndefValue>(C) ||
+      isa<ConstantPointerNull>(C))
+    return;
+  if (isa<ConstantInt>(C) || isa<ConstantFP>(C)) {
+    unsigned Size = DL.getTypeStoreSize(C->getType());
+    APInt Value = isa<ConstantFP>(C)
+                      ? cast<ConstantFP>(C)->getValueAPF().bitcastToAPInt()
+                      : cast<ConstantInt>(C)->getValue().zext(Size * 8);
+    for (unsigned B = 0; B < Size; ++B)
+      Bytes[Offset + B] = Value.extractBitsAsZExtValue(8, 8 * B);
     return;
   }
-  if (auto *S = dyn_cast<StructType>(T)) {
+  if (auto *S = dyn_cast<StructType>(C->getType())) {
+    const StructLayout *L = DL.getStructLayout(S);
     for (unsigned I = 0; I < S->getNumElements(); ++I)
-      emitCells(C->getAggregateElement(I), S->getElementType(I));
+      fillBytes(C->getAggregateElement(I), DL, Bytes,
+                Offset + L->getElementOffset(I));
     return;
   }
-  int64_t Value = 0;
-  if (T->isIntegerTy(64)) {
-    // Two little-endian cells.
-    uint64_t Bits =
-        isa<ConstantInt>(C) ? cast<ConstantInt>(C)->getZExtValue() : 0;
-    OutStreamer->emitIntValue(constantSlot(int32_t(Bits)), 8);
-    OutStreamer->emitIntValue(constantSlot(int32_t(Bits >> 32)), 8);
+  if (auto *A = dyn_cast<ArrayType>(C->getType())) {
+    uint64_t Stride = DL.getTypeAllocSize(A->getElementType());
+    for (unsigned I = 0; I < A->getNumElements(); ++I)
+      fillBytes(C->getAggregateElement(I), DL, Bytes, Offset + I * Stride);
     return;
   }
-  if (const auto *I = dyn_cast<ConstantInt>(C))
-    Value = int32_t(I->getSExtValue());
-  else if (const auto *G = dyn_cast<GlobalVariable>(C))
-    Value = int64_t(GlobalWords.lookup(G)) * 4;
-  OutStreamer->emitIntValue(constantSlot(Value), 8);
+  // The byte address of a global, plus a constant offset.
+  GlobalValue *GV = nullptr;
+  APInt Extra(64, 0);
+  if (!IsConstantOffsetFromGlobal(const_cast<Constant *>(C), GV, Extra, DL))
+    return;
+  if (const auto *G = dyn_cast<GlobalVariable>(GV)) {
+    support::endian::write32le(
+        &Bytes[Offset],
+        uint32_t(GlobalWords.lookup(G) * 4 + Extra.getSExtValue()));
+  } else if (const auto *F = dyn_cast<Function>(GV)) {
+    // Code addresses are known only after layout; the cell is an expression.
+    if (Offset % 4 || !Extra.isZero())
+      error(Twine("function pointer to '") + F->getName() +
+            "' must occupy a whole aligned cell in an initializer");
+    else
+      FunctionCells.push_back({Offset / 4, F});
+  }
 }
 
-void SquallAsmPrinter::emitStartOfAsmFile(Module &M) {
+void SquallAsmPrinter::emitCells(const Constant *C, const DataLayout &DL) {
+  SmallVector<uint8_t, 64> Bytes(alignTo(DL.getTypeAllocSize(C->getType()), 4));
+  FunctionCells.clear();
+  fillBytes(C, DL, Bytes, 0);
+  for (unsigned I = 0; I < Bytes.size(); I += 4) {
+    auto Code = find_if(FunctionCells,
+                        [&](const auto &Cell) { return Cell.first == I / 4; });
+    if (Code == FunctionCells.end()) {
+      OutStreamer->emitIntValue(
+          constantSlot(int32_t(support::endian::read32le(&Bytes[I]))), 8);
+      continue;
+    }
+    // A constant slot holding the entry's word address.
+    MCContext &Ctx = OutContext;
+    const MCExpr *Entry = MCBinaryExpr::createDiv(
+        MCBinaryExpr::createSub(
+            MCSymbolRefExpr::create(entryLabel(*Code->second), Ctx),
+            MCSymbolRefExpr::create(Halt, Ctx), Ctx),
+        MCConstantExpr::create(8, Ctx), Ctx);
+    OutStreamer->emitValue(
+        MCBinaryExpr::createOr(
+            Entry, MCConstantExpr::create(int64_t(constantSlot(0)), Ctx), Ctx),
+        8);
+  }
+}
+
+void SquallAsmPrinter::emitImageHeader(Module &M) {
   const DataLayout &DL = M.getDataLayout();
   Halt = OutContext.getOrCreateSymbol("__squall_halt");
   DepthError = OutContext.getOrCreateSymbol("__squall_depth_error");
   MemoryError = OutContext.getOrCreateSymbol("__squall_memory_error");
-  // IR validation already reported errors and emptied the module.
-  if (M.getNamedMetadata("squall.invalid"))
-    return;
+  Trap = OutContext.getOrCreateSymbol("__squall_trap");
+  // This runs after the IR passes: a module that failed IR validation has
+  // unreachable function bodies, and is still laid out so that code
+  // generation completes quietly after the diagnostics.
   if (MemoryBytes < 64 * 1024 || MemoryBytes % 16 ||
       MemoryBytes > UINT64_C(1) << 32) {
     error("-squall-memory-bytes must be a multiple of 16 between 64 KiB and "
@@ -491,8 +583,12 @@ void SquallAsmPrinter::emitStartOfAsmFile(Module &M) {
   }
   Entry = F;
 
-  // Assign every global a word in the low data region.
-  uint64_t Next = FirstGlobalWord;
+  // Assign every global a word in the low data region, after the call join
+  // words, which stay empty.
+  GlobalBase = FirstGlobalWord;
+  if (Squall::isForkJoinEnabled())
+    GlobalBase += Squall::NumCallJoinWords;
+  uint64_t Next = GlobalBase;
   for (const GlobalVariable &G : M.globals()) {
     if (!G.hasInitializer() || G.getName().starts_with("llvm."))
       continue;
@@ -530,7 +626,7 @@ void SquallAsmPrinter::emitStartOfAsmFile(Module &M) {
     OutStreamer->emitValueToOffset(
         MCConstantExpr::create(It->second * 8, OutContext), 0, SMLoc());
     OutStreamer->emitLabel(getSymbol(&G));
-    emitCells(G.getInitializer(), G.getValueType());
+    emitCells(G.getInitializer(), DL);
   }
   OutStreamer->emitValueToOffset(
       MCConstantExpr::create(CodeStart * 8, OutContext), 0, SMLoc());
@@ -554,6 +650,9 @@ void SquallAsmPrinter::emitStartOfAsmFile(Module &M) {
   int Memory = Runtime.imm(Dupr, StatusMemory);
   Runtime[Memory].Label = MemoryError;
   Runtime[Memory].D = Dest::item(StatusWrite);
+  int Trapped = Runtime.imm(Dupr, StatusTrap);
+  Runtime[Trapped].Label = Trap;
+  Runtime[Trapped].D = Dest::item(StatusWrite);
   // The start token runs in the root frame: copy the loader's argument slots
   // into the entry function's argument registers, then jump to it.
   int Start = Runtime.size();
@@ -584,10 +683,10 @@ void SquallAsmPrinter::expandBinary(Chain &C, const MachineInstr &MI, int Alu,
   } else if (Unsigned) {
     C.read(word(B));
     C.zeroExtend32();
-    C.store(Squall::ScratchWord);
+    C.store(C.scratch());
     C.read(A);
     C.zeroExtend32();
-    C.slotOp(Alu, FrameSlot, Squall::ScratchWord);
+    C.slotOp(Alu, FrameSlot, C.scratch());
   } else {
     C.read(A);
     C.slotOp(Alu, FrameSlot, word(B));
@@ -632,8 +731,8 @@ void SquallAsmPrinter::expandCompare(Chain &C, const MachineInstr &MI) {
   if (Signed) {
     C.read(B);
     C.imm(Xor, INT32_MIN);
-    C.store(Squall::ScratchWord);
-    Right = Squall::ScratchWord;
+    C.store(C.scratch());
+    Right = C.scratch();
   }
   C.read(A);
   if (Signed)
@@ -676,7 +775,9 @@ void SquallAsmPrinter::expandMemory(Chain &C, const MachineInstr &MI,
   int Stub = C.jump(Dest());
   C[Stub].Detached = true;
   C[Stub].D = Dest::item(C.readAbs(PointerBox));
-  C.captureSecondary(C.imm(Sub, FirstGlobalWord * 4));
+  // Below the globals are the runtime's words, including the call join
+  // words, which no pointer may reach.
+  C.captureSecondary(C.imm(Sub, GlobalBase * 4));
   C.branch(Dest::symbol(MemoryError)); // Borrow: a reserved low word.
   Stub = C.jump(Dest());
   C[Stub].Detached = true;
@@ -727,12 +828,15 @@ void SquallAsmPrinter::expandMemory(Chain &C, const MachineInstr &MI,
 // new frame fits in the arena, writes the arguments and its continuation tag
 // into the callee frame, and sends a token to the callee with the frame
 // pointer advanced. The callee returns by sending its result to that tag.
+// An indirect call builds the callee's tag from a function pointer, the
+// entry's word address, instead of minting it.
 void SquallAsmPrinter::expandCall(Chain &C, const MachineInstr &MI) {
   unsigned FrameWords =
       MF->getInfo<SquallMachineFunctionInfo>()->getFrameWords();
-  bool HasResult = MI.getOpcode() == Squall::CALLR;
+  unsigned Opcode = MI.getOpcode();
+  bool HasResult = Opcode == Squall::CALLR || Opcode == Squall::CALLIR;
+  bool Indirect = Opcode == Squall::CALLI || Opcode == Squall::CALLIR;
   unsigned CalleeOp = HasResult ? 1 : 0;
-  const auto *Callee = cast<Function>(MI.getOperand(CalleeOp).getGlobal());
 
   // New FP + 2048 must not pass the arena end; the callee can address any
   // word below its FP + 2048 with an 11-bit frame slot.
@@ -754,10 +858,22 @@ void SquallAsmPrinter::expandCall(Chain &C, const MachineInstr &MI) {
   }
   int SaveReturn = C.extract(Dest::end());
   C.store(FrameWords + Squall::ReturnTagWord);
-  C.extract(Dest::symbol(entryLabel(*Callee)));
-  int Advance = C.slotOp(Add, CodeSlot, 0);
-  C.send(FrameSlot, Squall::ReturnTagWord, Left);
-  C[Advance].CodeData = C.data(constantSlot(int64_t(FrameWords) << 29));
+  if (Indirect) {
+    // Callee tag: the pointer's entry word with the callee's frame pointer.
+    C.extract(Dest::symbol(Halt));
+    C.imm(Shrl, TagFPShift);
+    C.imm(Add, FrameWords);
+    C.imm(Shl, TagFPShift);
+    C.slotOp(Or, FrameSlot, word(MI.getOperand(CalleeOp)));
+    C.send(FrameSlot, Squall::ReturnTagWord, Left);
+  } else {
+    const auto *Callee = cast<Function>(MI.getOperand(CalleeOp).getGlobal());
+    C.extract(Dest::symbol(entryLabel(*Callee)));
+    int Advance = C.slotOp(Add, CodeSlot, 0);
+    C.send(FrameSlot, Squall::ReturnTagWord, Left);
+    C[Advance].CodeData =
+        C.data(constantSlot(int64_t(FrameWords) << TagFPShift));
+  }
   if (HasResult) {
     int Store = C.store(word(MI.getOperand(0)));
     C[SaveReturn].Target = Dest::item(Store);
@@ -772,7 +888,19 @@ void SquallAsmPrinter::emitFunctionEntryLabel() {
 void SquallAsmPrinter::emitInstruction(const MachineInstr *MI) {
   if (!Entry)
     return; // The image layout was rejected; an error is already reported.
-  Chain C(Halt);
+  switch (MI->getOpcode()) {
+  case Squall::FORK:
+  case Squall::LANE:
+  case Squall::JOIN:
+    return emitLaneMarker(*MI);
+  default:
+    append(expand(*MI, Scratch));
+  }
+}
+
+Chain SquallAsmPrinter::expand(const MachineInstr &Instr, unsigned Scratch) {
+  const MachineInstr *MI = &Instr;
+  Chain C(Halt, Scratch);
   auto Op = [&](unsigned I) -> const MachineOperand & {
     return MI->getOperand(I);
   };
@@ -786,7 +914,18 @@ void SquallAsmPrinter::emitInstruction(const MachineInstr *MI) {
     C.store(word(Op(0)));
     break;
   case Squall::MOVG:
-    C.imm(Dupr, int64_t(globalWord(Op(1))) * 4);
+    if (const auto *F = dyn_cast<Function>(Op(1).getGlobal())) {
+      // A function pointer is the entry's word address: the instruction field
+      // of a tag minted for the entry.
+      C.extract(Dest::symbol(entryLabel(*F)));
+      C.imm(And, TagIPMask);
+    } else {
+      // A byte address: the offset need not be a whole cell.
+      C.imm(Dupr, int64_t(GlobalWords.lookup(
+                      cast<GlobalVariable>(Op(1).getGlobal()))) *
+                          4 +
+                      Op(1).getOffset());
+    }
     C.store(word(Op(0)));
     break;
   case Squall::FIADDR:
@@ -845,10 +984,10 @@ void SquallAsmPrinter::emitInstruction(const MachineInstr *MI) {
   case Squall::MULHU:
     C.read(word(Op(2)));
     C.zeroExtend32();
-    C.store(Squall::ScratchWord);
+    C.store(C.scratch());
     C.read(word(Op(1)));
     C.zeroExtend32();
-    C.slotOp(Mul, FrameSlot, Squall::ScratchWord);
+    C.slotOp(Mul, FrameSlot, C.scratch());
     C.imm(Shrl, 32);
     C.signExtend32();
     C.store(word(Op(0)));
@@ -932,7 +1071,12 @@ void SquallAsmPrinter::emitInstruction(const MachineInstr *MI) {
   }
   case Squall::CALL:
   case Squall::CALLR:
+  case Squall::CALLI:
+  case Squall::CALLIR:
     expandCall(C, *MI);
+    break;
+  case Squall::TRAP:
+    C.jump(Dest::symbol(Trap));
     break;
   case Squall::RET:
     C.imm(Dupr, 0);
@@ -946,6 +1090,10 @@ void SquallAsmPrinter::emitInstruction(const MachineInstr *MI) {
     llvm_unreachable("unexpected machine instruction");
   }
   assert(C.size() && C.entry() == Left && "chains are entered on the left");
+  return C;
+}
+
+void SquallAsmPrinter::append(Chain C) {
   if (Pending) {
     if (std::optional<unsigned> Word = Pending->storedWord();
         Word && C.readsFirst(*Word))
@@ -958,6 +1106,57 @@ void SquallAsmPrinter::emitInstruction(const MachineInstr *MI) {
 void SquallAsmPrinter::emitBasicBlockEnd(const MachineBasicBlock &MBB) {
   flush(Left);
   AsmPrinter::emitBasicBlockEnd(MBB);
+}
+
+// FORK id; lane A; LANE id; lane B; JOIN id becomes
+//
+//   fork:    dupl laneB.l #0, secondary to lane A at the next word
+//   lane A:  ...; dupl join.l #0
+//   lane B:  ...; falling into join on the right
+//   join:    dupl (Once) [JoinWord]
+//
+// The first token to reach the join fills the empty join slot and stops; the
+// second empties it again and continues. Lanes without calls share one join
+// word, since at most one such join is pending at a time; a lane that calls
+// joins on a reserved word of its own (see SquallForkJoin). Each lane has its
+// own scratch word.
+void SquallAsmPrinter::emitLaneMarker(const MachineInstr &MI) {
+  auto &[LaneB, Join] = Lanes[MI.getOperand(0).getImm()];
+  if (!LaneB) {
+    LaneB = OutContext.createTempSymbol("squall_lane");
+    Join = OutContext.createTempSymbol("squall_join");
+  }
+  switch (MI.getOpcode()) {
+  case Squall::FORK: {
+    Chain Fork(Halt);
+    int Split = Fork.jump(Dest::symbol(LaneB));
+    Fork[Split].Secondary = true;
+    append(std::move(Fork));
+    Forked = true;
+    return;
+  }
+  case Squall::LANE: {
+    Chain ToJoin(Halt);
+    ToJoin.jump(Dest::symbol(Join));
+    append(std::move(ToJoin));
+    flush(Left);
+    OutStreamer->emitLabel(LaneB);
+    Scratch = Squall::LaneScratchWord;
+    return;
+  }
+  default: {
+    flush(Right);
+    unsigned Index = MI.getOperand(1).getImm();
+    unsigned Word = Index ? FirstGlobalWord + Index - 1 : JoinWord;
+    UsedJoinWords.insert(Word);
+    Chain Meet(Halt);
+    int Slot = Meet.slotOp(Dupl, AbsoluteSlot, Word, Once);
+    Meet[Slot].Label = Join;
+    Pending = std::move(Meet);
+    Scratch = Squall::ScratchWord;
+    return;
+  }
+  }
 }
 
 json::Object SquallAsmPrinter::manifest(const Module &M) const {
@@ -999,8 +1198,15 @@ json::Object SquallAsmPrinter::manifest(const Module &M) const {
       {"status_word", StatusWord},
       {"status_codes", json::Object{{"success", StatusSuccess},
                                     {"call_depth_exceeded", StatusDepth},
-                                    {"invalid_memory_address", StatusMemory}}},
+                                    {"invalid_memory_address", StatusMemory},
+                                    {"trap", StatusTrap}}},
       {"max_cycles", 1000000},
+      // Parallel lanes may interleave differently on different cores; only
+      // the multiset of executed tokens is fixed.
+      {"parallel_lanes", Forked},
+      {"join_words",
+       json::Array(UsedJoinWords.empty() ? std::set<unsigned>{JoinWord}
+                                         : UsedJoinWords)},
       {"globals", std::move(Globals)},
       {"memory_model",
        json::Object{{"pointer_bits", 32},
