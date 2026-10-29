@@ -61,7 +61,8 @@ jobs:
       - name: Build the Squall LLVM and Clang tools
         run: |
           python llvm/utils/squall/build.py --build-dir "$GITHUB_WORKSPACE/build" \
-            --static-tools --ccache --jobs 4 $(printf -- '--target %s ' $TOOLS)
+            --static-tools --ccache --jobs 4 $(printf -- '--target %s ' $TOOLS opt)
+      # opt runs in the lit tests only, so it is not packaged.
       - name: Lit tests
         run: |
           python build/bin/llvm-lit -v llvm/test/MC/Squall llvm/test/CodeGen/Squall \

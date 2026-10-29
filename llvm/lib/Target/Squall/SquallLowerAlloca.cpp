@@ -137,9 +137,9 @@ bool SquallLowerAlloca::runOnModule(Module &M) {
           ConstantInt::getSigned(I32, -int64_t(Alignment)));
       Value *Next = B.CreateAdd(Start, Size);
       // Exhausted, or the size wrapped around.
-      Value *Overflow =
-          B.CreateOr(B.CreateICmpUGT(Next, B.CreatePtrToInt(End, I32)),
-                     B.CreateICmpULT(Next, Start));
+      Value *Exhausted = B.CreateICmpUGT(Next, B.CreatePtrToInt(End, I32));
+      Value *Wrapped = B.CreateICmpULT(Next, Start);
+      Value *Overflow = B.CreateOr(Exhausted, Wrapped);
       Instruction *Fail = SplitBlockAndInsertIfThen(Overflow, A, true);
       IRBuilder<>(Fail).CreateCall(Trap);
       B.SetInsertPoint(A);

@@ -218,7 +218,10 @@ void SquallLowerMemory::updateCell(IRBuilder<> &B, Value *Ptr, Value *Field,
   Value *Old = B.CreateAlignedLoad(I32, Cell, Align(4), Volatile);
   Value *Hole = B.CreateNot(
       B.CreateShl(B.getInt32(maskTrailingOnes<uint32_t>(Bytes * 8)), Shift));
-  Value *New = B.CreateOr(B.CreateAnd(Old, Hole),
-                          B.CreateShl(B.CreateZExt(Field, I32), Shift));
+  // Operands are built in separate statements: argument evaluation order is
+  // unspecified, and the IR must not depend on the host compiler.
+  Value *Kept = B.CreateAnd(Old, Hole);
+  Value *Placed = B.CreateShl(B.CreateZExt(Field, I32), Shift);
+  Value *New = B.CreateOr(Kept, Placed);
   B.CreateAlignedStore(New, Cell, Align(4), Volatile);
 }

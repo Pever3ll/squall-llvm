@@ -137,12 +137,16 @@ Value *SquallLowerFloat::lowerCompare(IRBuilder<> &B, CmpInst::Predicate P,
     return Cmp("unord", CmpInst::ICMP_NE);
   case CmpInst::FCMP_ORD:
     return Cmp("unord", CmpInst::ICMP_EQ);
-  case CmpInst::FCMP_ONE:
-    return B.CreateAnd(Cmp("unord", CmpInst::ICMP_EQ),
-                       Cmp("ne", CmpInst::ICMP_NE));
-  case CmpInst::FCMP_UEQ:
-    return B.CreateOr(Cmp("unord", CmpInst::ICMP_NE),
-                      Cmp("eq", CmpInst::ICMP_EQ));
+  // Two calls each, in separate statements: argument evaluation order is
+  // unspecified, and the IR must not depend on the host compiler.
+  case CmpInst::FCMP_ONE: {
+    Value *Ordered = Cmp("unord", CmpInst::ICMP_EQ);
+    return B.CreateAnd(Ordered, Cmp("ne", CmpInst::ICMP_NE));
+  }
+  case CmpInst::FCMP_UEQ: {
+    Value *Unordered = Cmp("unord", CmpInst::ICMP_NE);
+    return B.CreateOr(Unordered, Cmp("eq", CmpInst::ICMP_EQ));
+  }
   default:
     llvm_unreachable("not a floating-point predicate");
   }
@@ -171,9 +175,14 @@ Value *SquallLowerFloat::lowerClassTest(IRBuilder<> &B, Value *V,
   APInt MinNormal = APInt::getOneBitSet(Bits, Mantissa);
   Value *Result = B.getFalse();
   auto Add = [&](Value *Class) { Result = B.CreateOr(Result, Class); };
-  if (Mask & fcSNan)
-    Add(B.CreateAnd(B.CreateICmpUGT(Abs, ConstantInt::get(IT, Inf)),
-                    ULT(Inf | Quiet)));
+  // A range check, its two comparisons in order.
+  auto Between = [&](Value *Low, Value *High) {
+    return B.CreateAnd(Low, High);
+  };
+  if (Mask & fcSNan) {
+    Value *AboveInf = B.CreateICmpUGT(Abs, ConstantInt::get(IT, Inf));
+    Add(Between(AboveInf, ULT(Inf | Quiet)));
+  }
   if (Mask & fcQNan)
     Add(B.CreateICmpUGE(Abs, ConstantInt::get(IT, Inf | Quiet)));
   auto Signed = [&](FPClassTest Neg, FPClassTest Pos, Value *Class) {
@@ -185,12 +194,10 @@ Value *SquallLowerFloat::lowerClassTest(IRBuilder<> &B, Value *V,
       Add(B.CreateAnd(B.CreateNot(Negative), Class));
   };
   Signed(fcNegInf, fcPosInf, EQ(Inf));
-  Signed(fcNegNormal, fcPosNormal,
-         B.CreateAnd(B.CreateICmpUGE(Abs, ConstantInt::get(IT, MinNormal)),
-                     ULT(Inf)));
-  Signed(fcNegSubnormal, fcPosSubnormal,
-         B.CreateAnd(B.CreateICmpNE(Abs, ConstantInt::get(IT, 0)),
-                     ULT(MinNormal)));
+  Value *Normal = B.CreateICmpUGE(Abs, ConstantInt::get(IT, MinNormal));
+  Signed(fcNegNormal, fcPosNormal, Between(Normal, ULT(Inf)));
+  Value *Nonzero = B.CreateICmpNE(Abs, ConstantInt::get(IT, 0));
+  Signed(fcNegSubnormal, fcPosSubnormal, Between(Nonzero, ULT(MinNormal)));
   Signed(fcNegZero, fcPosZero, EQ(APInt(Bits, 0)));
   return Result;
 }
@@ -309,13 +316,14 @@ bool SquallLowerFloat::lower(Instruction &I) {
           B.CreateAnd(Bits(II->getArgOperand(0)), ConstantInt::get(IT, ~Sign)),
           T);
       break;
-    case Intrinsic::copysign:
-      New = B.CreateBitCast(B.CreateOr(B.CreateAnd(Bits(II->getArgOperand(0)),
-                                                   ConstantInt::get(IT, ~Sign)),
-                                       B.CreateAnd(Bits(II->getArgOperand(1)),
-                                                   ConstantInt::get(IT, Sign))),
-                            T);
+    case Intrinsic::copysign: {
+      Value *Magnitude =
+          B.CreateAnd(Bits(II->getArgOperand(0)), ConstantInt::get(IT, ~Sign));
+      Value *SignOf =
+          B.CreateAnd(Bits(II->getArgOperand(1)), ConstantInt::get(IT, Sign));
+      New = B.CreateBitCast(B.CreateOr(Magnitude, SignOf), T);
       break;
+    }
     case Intrinsic::is_fpclass:
       New = lowerClassTest(
           B, II->getArgOperand(0),
