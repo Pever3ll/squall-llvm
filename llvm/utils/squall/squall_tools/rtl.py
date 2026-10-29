@@ -124,7 +124,7 @@ def execution_order_matches(actual, expected, manifest):
 
 
 def run_rtl(directory, *, isacomp=None, cache=None, reference=None,
-            variant="baseline", memory_latency=5, stall_seed=0, stall_jitter=0):
+            variant="baseline", memory_latency=5, stall_seed=0, stall_jitter=0, expected_status=1):
     if not 0 <= stall_seed < 1 << 31 or not 0 <= stall_jitter <= 200:
         raise RuntimeError("stall seed must fit positive i32 and jitter must be in [0, 200]")
     if stall_jitter and (variant != "production" or not memory_latency):
@@ -136,8 +136,10 @@ def run_rtl(directory, *, isacomp=None, cache=None, reference=None,
     if manifest["memory_bytes"] > 512 * 1024:
         raise RuntimeError("baseline RTL harness supports images up to 512 KiB")
     expected = run_image(directory, reference=reference, trace=True)
-    if not expected["quiescent"] or expected["status"] != 1:
-        raise RuntimeError(f"reference execution failed: {expected}")
+    # A program may be expected to stop with an error status, such as an
+    # invalid memory address; the RTL must then stop the same way.
+    if not expected["quiescent"] or expected["status"] != expected_status:
+        raise RuntimeError(f"reference execution failed (expected status {expected_status}): {expected}")
     simulator = build_simulator(isacomp, cache, variant=variant, memory_latency=memory_latency)
     # The upstream testbench has a 128-byte filename register. Running in the
     # image directory also avoids truncation of long absolute workspace paths.
@@ -184,7 +186,8 @@ def run_rtl(directory, *, isacomp=None, cache=None, reference=None,
     result["trace_matches"] = result["trace_order_matches" if serial else "execution_order_matches"]
     result["wall_cycles"] = next((int(row.split()[1]) for row in output.splitlines() if row.startswith("WALL ")), None)
     (directory / f"{stem}-result.json").write_text(json.dumps(result, indent=2) + "\n")
-    if actual != expected["result"] or result["status"] != 1 or not result["trace_matches"] or differences:
+    if (actual != expected["result"] or result["status"] != expected_status or not result["trace_matches"]
+            or differences):
         raise RuntimeError(f"RTL/reference mismatch: {result}; inspect {trace_path} and reference.trace")
     return result
 
@@ -198,11 +201,14 @@ def main(argv=None):
     parser.add_argument("--memory-latency", type=int, default=5)
     parser.add_argument("--stall-seed", type=int, default=0)
     parser.add_argument("--stall-jitter", type=int, default=0)
+    parser.add_argument("--expected-status", type=int, default=1,
+                        help="status the program must stop with (1 is success)")
     args = parser.parse_args(argv)
     try:
         print(json.dumps(run_rtl(args.image, isacomp=args.isacomp_dir, reference=args.reference_dir,
                                  variant=args.variant, memory_latency=args.memory_latency,
-                                 stall_seed=args.stall_seed, stall_jitter=args.stall_jitter), sort_keys=True))
+                                 stall_seed=args.stall_seed, stall_jitter=args.stall_jitter,
+                                 expected_status=args.expected_status), sort_keys=True))
         return 0
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"squall-rtl: {exc}", file=sys.stderr)

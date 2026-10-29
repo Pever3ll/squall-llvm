@@ -60,6 +60,8 @@ CASES = {
         "chains": [(0,), (1,), (37,)],
         "horner": [(0,), (5,), (-12,)],
         "sum_and_hash": [(0,), (3,), (-9,)],
+        "call_beside_arithmetic": [(0,), (27,), (-5,)],
+        "two_frame_arrays": [(0,), (9,), (-100,)],
     },
     "programs.c": {
         "points": [(0,), (3,), (-7,)],

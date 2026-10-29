@@ -45,3 +45,43 @@ int sum_and_hash(int n) {
   }
   return sum ^ (int)h;
 }
+
+// A call in one lane beside arithmetic in the other. The callee cannot call
+// back into this function, so the region joins on a reserved word of its own
+// while the callee runs (and may fork and join itself).
+__attribute__((noinline)) static int collatz_steps(int n) {
+  int steps = 0;
+  while (n != 1 && steps < 500) {
+    n = n & 1 ? 3 * n + 1 : n / 2;
+    ++steps;
+  }
+  return steps;
+}
+
+int call_beside_arithmetic(int n) {
+  int steps = collatz_steps((n & 1023) | 1);
+  u32 h = (u32)n * 2654435761u;
+  h ^= h >> 15;
+  h *= 2246822519u;
+  h ^= h >> 13;
+  h *= 3266489917u;
+  h ^= h >> 16;
+  h += 0x9e3779b9u;
+  h ^= h << 6;
+  return steps ^ (int)h;
+}
+
+// Frame arrays in both lanes: static frame slots need no memory helper, and
+// the two arrays cannot alias.
+int two_frame_arrays(int n) {
+  volatile int a[4], b[4];
+  a[0] = n;
+  a[1] = n + 1;
+  a[2] = a[0] * a[1];
+  a[3] = a[2] - n;
+  b[0] = n ^ 0x55;
+  b[1] = b[0] * 7;
+  b[2] = b[1] + b[0];
+  b[3] = b[2] >> 2;
+  return a[3] + b[3];
+}

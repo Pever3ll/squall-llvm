@@ -23,6 +23,7 @@ namespace llvm {
 class SquallMachineFunctionInfo : public MachineFunctionInfo {
   unsigned ObjectBase = 0;
   unsigned FrameWords = 0;
+  unsigned VarArgsWord = 0; // Frame word of the first unnamed argument.
 
 public:
   SquallMachineFunctionInfo(const Function &, const TargetSubtargetInfo *) {}
@@ -36,6 +37,8 @@ public:
 
   unsigned getObjectBase() const { return ObjectBase; }
   unsigned getFrameWords() const { return FrameWords; }
+  unsigned getVarArgsWord() const { return VarArgsWord; }
+  void setVarArgsWord(unsigned Word) { VarArgsWord = Word; }
   void setLayout(unsigned Base, unsigned Words) {
     ObjectBase = Base;
     FrameWords = Words;

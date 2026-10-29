@@ -202,15 +202,21 @@ let isCall = 1, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in {
   def CALLIR : SquallPseudo<(outs GPR:$d), (ins GPR:$f, variable_ops)>;
 }
 
+// Halts the program with the trap status (__builtin_trap, abort, assert).
+let hasSideEffects = 1 in
+def TRAP : SquallPseudo<(outs), (ins), [(trap)]>;
+
 let isReturn = 1, isTerminator = 1, isBarrier = 1 in {
   def RET : SquallPseudo<(outs), (ins), [(SquallRetVoid)]>;
   def RETV : SquallPseudo<(outs), (ins GPR:$v), [(SquallRet GPR:$v)]>;
 }
 
-// Parallel lanes (SquallForkJoin): FORK id; lane A; LANE id; lane B; JOIN id.
-// The unique id keeps branch folding from merging parts of different regions.
+// Parallel lanes (SquallForkJoin): FORK id; lane A; LANE id; lane B;
+// JOIN id, slot. The unique id keeps branch folding from merging parts of
+// different regions; slot is 0 for the shared join word, or 1 + the index of
+// a reserved call join word.
 let hasSideEffects = 1, isNotDuplicable = 1 in {
   def FORK : SquallPseudo<(outs), (ins i32imm:$id)>;
   def LANE : SquallPseudo<(outs), (ins i32imm:$id)>;
-  def JOIN : SquallPseudo<(outs), (ins i32imm:$id)>;
+  def JOIN : SquallPseudo<(outs), (ins i32imm:$id, i32imm:$slot)>;
 }

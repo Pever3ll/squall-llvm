@@ -27,6 +27,8 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSquallTarget() {
   initializeSquallAsmPrinterPass(PR);
   initializeSquallCheckIRPass(PR);
   initializeSquallLowerMemoryPass(PR);
+  initializeSquallLowerFloatPass(PR);
+  initializeSquallLowerAllocaPass(PR);
   initializeSquallForkJoinPass(PR);
   initializeSquallDAGToDAGISelLegacyPass(PR);
 }
@@ -59,6 +61,10 @@ public:
       : TargetPassConfig(TM, PM) {}
 
   void addIRPasses() override {
+    // Floating point becomes runtime calls, and dynamic allocas use the
+    // alloca area, before the checker looks at what remains.
+    addPass(createSquallLowerAllocaPass());
+    addPass(createSquallLowerFloatPass());
     addPass(createSquallCheckIRPass());
     TargetPassConfig::addIRPasses();
   }

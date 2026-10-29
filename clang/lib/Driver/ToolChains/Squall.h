@@ -54,6 +54,19 @@ public:
     return Links ? LTOK_Full : LTOK_None;
   }
 
+  /// The Squall runtime: include/ holds the C library headers and lib/ its
+  /// bitcode (libc.bc, libclang_rt.builtins.bc). --sysroot replaces the one
+  /// installed at lib/clang-runtimes/squallv2 beside the compiler.
+  std::string getRuntimeDir() const;
+
+  void
+  AddClangSystemIncludeArgs(const llvm::opt::ArgList &DriverArgs,
+                            llvm::opt::ArgStringList &CC1Args) const override;
+  void
+  addClangTargetOptions(const llvm::opt::ArgList &DriverArgs,
+                        llvm::opt::ArgStringList &CC1Args, BoundArch BA,
+                        Action::OffloadKind DeviceOffloadKind) const override;
+
 protected:
   Tool *buildLinker() const override;
 };

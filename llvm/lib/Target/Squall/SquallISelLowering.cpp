@@ -28,6 +28,7 @@
 #include "SquallISelLowering.h"
 #include "MCTargetDesc/SquallMCTargetDesc.h"
 #include "Squall.h"
+#include "SquallMachineFunctionInfo.h"
 #include "SquallRegisterInfo.h"
 #include "SquallSelectionDAGInfo.h"
 #include "SquallSubtarget.h"
@@ -38,6 +39,7 @@
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Module.h"
 
 using namespace llvm;
 
@@ -63,6 +65,15 @@ SquallTargetLowering::SquallTargetLowering(const TargetMachine &TM,
   setMaxDivRemBitWidthSupported(32);
 
   setOperationAction(ISD::GlobalAddress, MVT::i32, Custom);
+  setOperationAction(ISD::TRAP, MVT::Other, Legal);
+  // Variadic arguments are in the argument registers, which are frame words;
+  // va_list points at the first unnamed one. Arguments are packed four-byte
+  // cells, so va_arg must not round the pointer up for eight-byte types.
+  setOperationAction(ISD::VASTART, MVT::Other, Custom);
+  for (unsigned Op : {ISD::VAARG, ISD::VACOPY, ISD::VAEND})
+    setOperationAction(Op, MVT::Other, Expand);
+  setMinStackArgumentAlignment(Align(16));
+  setOperationAction(ISD::DEBUGTRAP, MVT::Other, Expand);
   for (unsigned Op : {ISD::BR_CC,        ISD::BR_JT,
                       ISD::BRIND,        ISD::SELECT_CC,
                       ISD::ROTL,         ISD::ROTR,
@@ -111,6 +122,20 @@ SDValue SquallTargetLowering::LowerOperation(SDValue Op,
     return lowerNarrowLoad(Op, DAG);
   case ISD::STORE:
     return lowerNarrowStore(Op, DAG);
+  case ISD::VASTART: {
+    // The address of the first unnamed argument's register word.
+    SDLoc DL(Op);
+    MachineFunction &MF = DAG.getMachineFunction();
+    unsigned Word = MF.getInfo<SquallMachineFunctionInfo>()->getVarArgsWord();
+    SDValue Address(
+        DAG.getMachineNode(Squall::FIADDR, DL, MVT::i32,
+                           DAG.getTargetConstant(Word, DL, MVT::i32),
+                           DAG.getTargetConstant(0, DL, MVT::i32)),
+        0);
+    const Value *List = cast<SrcValueSDNode>(Op.getOperand(2))->getValue();
+    return DAG.getStore(Op.getOperand(0), DL, Address, Op.getOperand(1),
+                        MachinePointerInfo(List));
+  }
   default:
     llvm_unreachable("unexpected custom lowering");
   }
@@ -125,9 +150,7 @@ SDValue SquallTargetLowering::lowerGlobalAddress(SDValue Op,
       F && F->isDeclaration()) {
     unsupported(DAG, DL,
                 Twine("'") + F->getName() +
-                    "' has no definition in this program; Squall has no "
-                    "runtime library, "
-                    "so every function must be compiled into the image");
+                    "' has no definition in this program");
     return DAG.getConstant(0, DL, MVT::i32);
   }
   SDValue Target =
@@ -283,9 +306,11 @@ SDValue SquallTargetLowering::LowerFormalArguments(
     const SmallVectorImpl<ISD::InputArg> &Ins, const SDLoc &DL,
     SelectionDAG &DAG, SmallVectorImpl<SDValue> &InVals) const {
   MachineFunction &MF = DAG.getMachineFunction();
-  if (IsVarArg || Ins.size() > Squall::NumArgRegs)
-    unsupported(DAG, DL,
-                "Squall functions take at most 16 fixed scalar arguments");
+  if (Ins.size() > Squall::NumArgRegs)
+    unsupported(DAG, DL, "Squall functions take at most 16 scalar arguments");
+  if (IsVarArg)
+    MF.getInfo<SquallMachineFunctionInfo>()->setVarArgsWord(
+        Squall::FirstRegWord + Ins.size());
   for (const ISD::InputArg &In : Ins) {
     if (In.VT != MVT::i32) {
       unsupported(DAG, DL, "Squall arguments must be 32-bit scalars");
@@ -316,22 +341,25 @@ SquallTargetLowering::LowerCall(CallLoweringInfo &CLI,
   if (auto *G = dyn_cast<GlobalAddressSDNode>(CLI.Callee))
     Callee = dyn_cast<Function>(G->getGlobal());
   std::string Undefined;
-  if (auto *S = dyn_cast<ExternalSymbolSDNode>(CLI.Callee))
-    Undefined = S->getSymbol();
-  else if (Callee && Callee->isDeclaration())
+  // Calls that code generation introduces (libcalls) name their target; the
+  // runtime library linked into the program defines it.
+  if (auto *S = dyn_cast<ExternalSymbolSDNode>(CLI.Callee)) {
+    const Module *M = DAG.getMachineFunction().getFunction().getParent();
+    Callee = M->getFunction(S->getSymbol());
+    if (!Callee || Callee->isDeclaration())
+      Undefined = S->getSymbol();
+  } else if (Callee && Callee->isDeclaration()) {
     Undefined = Callee->getName().str();
+  }
   if (!Undefined.empty()) {
     unsupported(DAG, DL,
                 Twine("call to '") + Undefined +
-                    "' has no definition in this program; Squall has no "
-                    "runtime library, "
-                    "so every function must be compiled into the image");
+                    "' has no definition in this program");
     for (const ISD::InputArg &In : CLI.Ins)
       InVals.push_back(DAG.getUNDEF(In.VT));
     return CLI.Chain;
   }
-  if (CLI.IsVarArg || CLI.Outs.size() > Squall::NumArgRegs ||
-      CLI.Ins.size() > 1)
+  if (CLI.Outs.size() > Squall::NumArgRegs || CLI.Ins.size() > 1)
     unsupported(DAG, DL, "unsupported Squall call signature");
 
   MachineFrameInfo &MFI = DAG.getMachineFunction().getFrameInfo();

@@ -1,3 +1,4 @@
+import json
 """LLVM IR compiled by llc, executed on the independent Zig interpreter."""
 import operator
 
@@ -322,6 +323,36 @@ def test_memory_range_guard(tmp_path, offset):
         %result = load i32, ptr %p, align 4
         ret i32 %result
       }}""", [offset], status=3)
+
+
+# A memory lane beside an arithmetic lane (-squall-fork-join). A guard that
+# fails in one lane halts the program; the other lane stops at the join.
+LANE_GUARD = """@value = global [4 x i32] [i32 11, i32 22, i32 33, i32 44]
+define i32 @main(i32 %i, i32 %b) {
+  %p = getelementptr i32, ptr @value, i32 %i
+  %v = load i32, ptr %p, align 4
+  %v2 = mul i32 %v, 3
+  %v3 = xor i32 %v2, 5
+  %b1 = mul i32 %b, 22695477
+  %b2 = lshr i32 %b1, 7
+  %b3 = xor i32 %b2, %b1
+  %r = add i32 %v3, %b3
+  ret i32 %r
+}"""
+
+
+def lane_guard_expected(i, b):
+    v = [11, 22, 33, 44][i] * 3 ^ 5
+    b1 = (b * 22695477) & 0xFFFFFFFF
+    return i32(v + ((b1 >> 7) ^ b1))
+
+
+@pytest.mark.parametrize("i,status", [(1, 1), (3, 1), (-16, 3), (65536, 3), (536870911, 3)])
+def test_memory_guard_inside_parallel_lane(tmp_path, opt, i, status):
+    result = execute(tmp_path, LANE_GUARD, [i, 77], lane_guard_expected(i, 77) if status == 1 else None,
+                     status=status, opt=opt, options=["-squall-fork-join"])
+    manifest = json.loads((tmp_path / "image/manifest.json").read_text())
+    assert manifest["parallel_lanes"], "the load and the arithmetic should form two lanes"
 
 
 def test_memset_and_memcpy(tmp_path, opt):

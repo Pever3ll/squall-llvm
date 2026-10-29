@@ -27,7 +27,6 @@
 ; CHECK:      dupr.c (1).r [{{[0-9]+}}]
 ; CHECK-NEXT: .Lsquall_join0:
 ; CHECK-NEXT: dupl (1).{{[lr]}} 7
-; CHECK:      .ascii {{.*}}join_words\":[7]{{.*}}parallel_lanes\":true
 
 ; SERIAL-NOT: dupl (1).{{[lr]}} 7
 ; SERIAL:     parallel_lanes\":false
@@ -40,5 +39,77 @@ define i32 @main(i32 %a, i32 %b) {
   %b2 = lshr i32 %b1, 7
   %b3 = xor i32 %b2, %b1
   %r = add i32 %a3, %b3
+  ret i32 %r
+}
+
+; A call may run in one lane when the callee cannot reach the caller again;
+; the region joins on reserved call join word 1 (absolute word 16), not the
+; shared word 7. A recursive call stays outside the lanes. Frame objects are
+; static slots, so stores to two of them may be in different lanes.
+; MIR-LABEL: name: calls
+; MIR:       FORK [[ID:[0-9]+]]
+; MIR-NEXT:  {{\$s[0-9]+}} = CALLR @leaf, $s0
+; MIR-NEXT:  LANE [[ID]]
+; MIR:       JOIN [[ID]], 1
+; MIR-LABEL: name: recursive
+; MIR-NOT:   FORK
+; MIR:       CALLR @recursive
+; MIR-LABEL: name: frames
+; MIR:       FORK [[FID:[0-9]+]]
+; MIR:       STF {{.*}} :: (volatile store (s32) into %ir.x)
+; MIR:       LANE [[FID]]
+; MIR:       STF {{.*}} :: (store (s32) into %ir.y)
+; MIR:       JOIN [[FID]], 0
+; CHECK-LABEL: calls:
+; CHECK:       .Lsquall_join{{[0-9]+}}:
+; CHECK-NEXT:  dupl (1).{{[lr]}} 16
+; The manifest lists both join words.
+; CHECK:       .ascii {{.*}}join_words\":[7,16]{{.*}}parallel_lanes\":true
+
+define internal i32 @leaf(i32 %x) noinline {
+  %y = mul i32 %x, 3
+  %z = add i32 %y, 1
+  ret i32 %z
+}
+
+define i32 @calls(i32 %a, i32 %b) {
+  %c = call i32 @leaf(i32 %a)
+  %b1 = mul i32 %b, 22695477
+  %b2 = lshr i32 %b1, 7
+  %b3 = xor i32 %b2, %b1
+  %r = add i32 %c, %b3
+  ret i32 %r
+}
+
+define i32 @recursive(i32 %a, i32 %b) {
+  %stop = icmp slt i32 %a, 1
+  br i1 %stop, label %done, label %more
+more:
+  %a1 = sub i32 %a, 1
+  %c = call i32 @recursive(i32 %a1, i32 %b)
+  %b1 = mul i32 %b, 22695477
+  %b2 = lshr i32 %b1, 7
+  %b3 = xor i32 %b2, %b1
+  %r = add i32 %c, %b3
+  ret i32 %r
+done:
+  ret i32 0
+}
+
+define i32 @frames(i32 %a) {
+  %x = alloca i32
+  %y = alloca i32
+  store volatile i32 %a, ptr %x
+  %x1 = load volatile i32, ptr %x
+  %x2 = mul i32 %x1, 5
+  store i32 %x2, ptr %x
+  %b = xor i32 %a, 85
+  store i32 %b, ptr %y
+  %y1 = load i32, ptr %y
+  %y2 = mul i32 %y1, 7
+  store i32 %y2, ptr %y
+  %xv = load i32, ptr %x
+  %yv = load i32, ptr %y
+  %r = add i32 %xv, %yv
   ret i32 %r
 }

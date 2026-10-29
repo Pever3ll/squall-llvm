@@ -33,6 +33,9 @@ void SquallFrameLowering::emitPrologue(MachineFunction &MF,
     if (MRI.isPhysRegUsed(Reg))
       UsedRegs = std::max<unsigned>(UsedRegs, TRI->getEncodingValue(Reg) -
                                                   Squall::FirstRegWord + 1);
+  // Reserved argument registers of a variadic function hold its arguments.
+  if (MF.getFunction().isVarArg())
+    UsedRegs = std::max(UsedRegs, Squall::NumArgRegs);
   if (MFI.getMaxAlign() > getStackAlign())
     MF.getFunction().getContext().diagnose(DiagnosticInfoUnsupported(
         MF.getFunction(),

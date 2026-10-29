@@ -15,6 +15,8 @@ add_llvm_target(SquallCodeGen
   SquallCheckIR.cpp
   SquallForkJoin.cpp
   SquallFrameLowering.cpp
+  SquallLowerAlloca.cpp
+  SquallLowerFloat.cpp
   SquallISelDAGToDAG.cpp
   SquallISelLowering.cpp
   SquallLowerMemory.cpp

@@ -8,12 +8,13 @@
 //
 // Squall memory consists of 64-bit matching slots. The backend maps each
 // four-byte little-endian cell to one slot, so a byte address is four times a
-// word address plus the byte's position in the cell. Floating point, atomics,
-// and code outside the module cannot be represented. This pass reports such
-// constructs with source locations before instruction selection, instead of
-// letting legalization fail later. Failing modules have their function bodies
-// replaced and are marked, so code generation completes quietly after the
-// diagnostics.
+// word address plus the byte's position in the cell. Atomics and code outside
+// the program cannot be represented; floating point has been rewritten into
+// runtime calls by SquallLowerFloat, apart from values that are only moved.
+// This pass reports such constructs with source locations before instruction
+// selection, instead of letting legalization fail later. Failing modules have
+// their function bodies replaced and are marked, so code generation completes
+// quietly after the diagnostics.
 //
 //===----------------------------------------------------------------------===//
 
@@ -49,6 +50,9 @@ class SquallCheckIR : public ModulePass {
   static bool isValueType(const Type *T) {
     if (T->isPointerTy())
       return T->getPointerAddressSpace() == 0;
+    // Software floating point: SelectionDAG softens the values that remain.
+    if (T->isFloatTy() || T->isDoubleTy())
+      return true;
     return T->isIntegerTy() && T->getIntegerBitWidth() <= 64;
   }
   /// Integers, pointers, and arrays and structs of them.
@@ -62,9 +66,9 @@ class SquallCheckIR : public ModulePass {
     return false;
   }
   static bool isSupportedInitializer(const Constant *C, const DataLayout &DL) {
-    if (isa<ConstantInt>(C) || isa<ConstantPointerNull>(C) ||
-        isa<ConstantAggregateZero>(C) || isa<UndefValue>(C) ||
-        isa<GlobalVariable>(C))
+    if (isa<ConstantInt>(C) || isa<ConstantFP>(C) ||
+        isa<ConstantPointerNull>(C) || isa<ConstantAggregateZero>(C) ||
+        isa<UndefValue>(C) || isa<GlobalVariable>(C))
       return true;
     if (const auto *F = dyn_cast<Function>(C))
       return !F->isDeclaration();
@@ -86,10 +90,21 @@ class SquallCheckIR : public ModulePass {
     return false;
   }
 
+  /// The C library and the soft-float builtins are linked into a program
+  /// only when clang links it; a single `clang -c` module has neither.
+  static std::string undefined(StringRef Name) {
+    return ("'" + Name +
+            "' has no definition in this program; the Squall runtime library "
+            "is linked only when clang links the program, without -c")
+        .str();
+  }
+
   void checkMemoryAccess(const Function &F, const Instruction &I, Type *T,
                          bool Atomic) {
     if (!isMemoryType(T))
-      fail(F, "Squall memory accesses must be integers or pointers",
+      fail(F,
+           "Squall memory accesses must be integers, pointers, float, or "
+           "double",
            I.getDebugLoc());
     // Volatile accesses need no special treatment: expanded code runs with a
     // single control token, in program order.
@@ -98,8 +113,6 @@ class SquallCheckIR : public ModulePass {
   }
 
   void checkFunction(const Function &F) {
-    if (F.isVarArg())
-      fail(F, "variadic functions are not supported on Squall");
     if (F.arg_size() > Squall::NumArgRegs)
       fail(F, "Squall functions take at most 16 arguments");
     for (const Argument &A : F.args())
@@ -107,16 +120,17 @@ class SquallCheckIR : public ModulePass {
           A.hasPreallocatedAttr() ||
           (A.hasByValAttr() && !isMemoryType(A.getParamByValType())))
         fail(F, "Squall arguments must be integers of at most 64 bits, "
-                "pointers, or byval aggregates of them");
+                "pointers, float, double, or byval aggregates of them");
     if (!F.getReturnType()->isVoidTy() && !isValueType(F.getReturnType()))
-      fail(F, "Squall return values must be integers of at most 64 bits or "
-              "pointers");
+      fail(F, "Squall return values must be integers of at most 64 bits, "
+              "pointers, float, or double");
     for (const Instruction &I : instructions(F)) {
       const DebugLoc &Loc = I.getDebugLoc();
       if (!I.getType()->isVoidTy() && !isValueType(I.getType()))
         fail(F,
              Twine("unsupported value type in '") + I.getOpcodeName() +
-                 "'; Squall supports integers of at most 64 bits and "
+                 "'; Squall supports integers of at most 64 bits, float, "
+                 "double, and "
                  "pointers",
              Loc);
       if (const auto *L = dyn_cast<LoadInst>(&I)) {
@@ -151,12 +165,7 @@ class SquallCheckIR : public ModulePass {
         }
         const Function *Callee = Call->getCalledFunction();
         if (Callee && !Callee->isIntrinsic() && Callee->isDeclaration())
-          fail(F,
-               Twine("call to '") + Callee->getName() +
-                   "' has no definition in this program; Squall has no runtime "
-                   "library, "
-                   "so every function must be compiled into the image",
-               Loc);
+          fail(F, "call to " + undefined(Callee->getName()), Loc);
       }
       // A function pointer is its target's entry word, so the target must be
       // in this module.
@@ -165,12 +174,7 @@ class SquallCheckIR : public ModulePass {
             Target && Target->isDeclaration() && !Target->isIntrinsic() &&
             !(isa<CallInst>(I) &&
               &Op == &cast<CallInst>(I).getCalledOperandUse()))
-          fail(F,
-               Twine("'") + Target->getName() +
-                   "' has no definition in this program; Squall has no runtime "
-                   "library, "
-                   "so every function must be compiled into the image",
-               Loc);
+          fail(F, undefined(Target->getName()), Loc);
     }
   }
 

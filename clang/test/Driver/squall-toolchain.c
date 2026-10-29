@@ -21,6 +21,40 @@
 // RUN: %clang -### --target=squallv2 %s 2>&1 | FileCheck %s --check-prefix=DEFAULT
 // DEFAULT: {{.*}}llvm-lto" "{{.*}}.o" "-o" "a.out" "-exported-symbol=main" "-O0"
 
+// The entry may also be given as a separate argument.
+// RUN: %clang -### --target=squallv2 -mllvm -squall-entry -mllvm kernel %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=SPACED
+// SPACED: {{.*}}llvm-lto" "{{.*}}.o" "-o" "a.out" "-squall-entry" "kernel" "-exported-symbol=kernel"
+
+// RUN: not %clang -### --target=squallv2 -fno-lto %s 2>&1 | FileCheck %s --check-prefix=NOLTO
+// NOLTO: error: Squall programs are linked as bitcode with full LTO; '-fno-lto' cannot be used when linking
+// RUN: not %clang -### --target=squallv2 -flto=thin %s 2>&1 | FileCheck %s --check-prefix=THIN
+// THIN: error: Squall programs are linked as bitcode with full LTO; '-flto=thin' cannot be used when linking
+
+// -fno-lto still compiles a single file to an image with -c.
+// RUN: %clang -### --target=squallv2 -fno-lto -c %s 2>&1 | FileCheck %s --check-prefix=COMPILE
+
+// Headers come from the compiler and the Squall runtime, never the host; the
+// runtime's bitcode libraries are linked unless -nostdlib or -nolibc says
+// otherwise.
+// RUN: %clang -### --target=squallv2 --sysroot=%S/Inputs/squall_runtime -c %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=INCLUDE
+// INCLUDE: "-nostdsysteminc"
+// INCLUDE-SAME: "-internal-isystem" "{{[^"]*}}{{/|\\}}include"
+// INCLUDE-SAME: "-internal-isystem" "{{[^"]*}}squall_runtime{{/|\\}}include"
+// INCLUDE-NOT: /usr/local/include
+// RUN: %clang -### --target=squallv2 --sysroot=%S/Inputs/squall_runtime %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=RUNTIME
+// RUNTIME: llvm-lto" {{.*}}"-O0" "{{[^"]*}}squall_runtime{{/|\\}}lib{{/|\\}}libc.bc" "{{[^"]*}}squall_runtime{{/|\\}}lib{{/|\\}}libclang_rt.builtins.bc"
+// RUN: %clang -### --target=squallv2 --sysroot=%S/Inputs/squall_runtime -nolibc %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=NOLIBC
+// NOLIBC: llvm-lto" {{.*}}"-O0" "{{[^"]*}}libclang_rt.builtins.bc"
+// NOLIBC-NOT: libc.bc
+// RUN: %clang -### --target=squallv2 --sysroot=%S/Inputs/squall_runtime -nostdlib %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=NOSTDLIB
+// NOSTDLIB: llvm-lto"
+// NOSTDLIB-NOT: .bc"
+
 // RUN: not %clang -### --target=squallv2 %s -lm 2>&1 | FileCheck %s --check-prefix=LIBRARY
 // LIBRARY: error: unsupported option '-lm' for target 'squallv2'
 

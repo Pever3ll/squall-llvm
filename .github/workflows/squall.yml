@@ -5,6 +5,9 @@ on:
     paths:
       - 'llvm/lib/Target/Squall/**'
       - 'llvm/lib/TargetParser/**'
+      - 'clang/lib/Driver/ToolChains/Squall.*'
+      - 'clang/lib/Basic/Targets/Squall.*'
+      - 'clang/test/**/squall*.c'
       - 'llvm/test/CodeGen/Squall/**'
       - 'llvm/test/MC/Squall/**'
       - 'llvm/utils/squall/**'
@@ -13,6 +16,9 @@ on:
     paths:
       - 'llvm/lib/Target/Squall/**'
       - 'llvm/lib/TargetParser/**'
+      - 'clang/lib/Driver/ToolChains/Squall.*'
+      - 'clang/lib/Basic/Targets/Squall.*'
+      - 'clang/test/**/squall*.c'
       - 'llvm/test/CodeGen/Squall/**'
       - 'llvm/test/MC/Squall/**'
       - 'llvm/utils/squall/**'
@@ -23,17 +29,20 @@ permissions:
   contents: read
 
 env:
-  TOOLS: llc llvm-config llvm-mc llvm-objcopy llvm-objdump llvm-readobj llvm-nm FileCheck not count split-file
+  TOOLS: clang llvm-lto llvm-link llc llvm-config llvm-mc llvm-objcopy llvm-objdump llvm-readobj llvm-nm FileCheck not count split-file
 
 jobs:
   llvm:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # A cold build with Clang; ccache makes later runs incremental.
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: |
             llvm
+            clang
+            compiler-rt/lib/builtins
             cmake
             third-party
       - uses: actions/setup-python@v5
@@ -42,21 +51,32 @@ jobs:
       - name: Install build and test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build
+          sudo apt-get install -y clang cmake ninja-build ccache
           python -m pip install -e './llvm/utils/squall[test]'
-      - name: Build the Squall LLVM tools
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: squall-ccache-${{ github.sha }}
+          restore-keys: squall-ccache-
+      - name: Build the Squall LLVM and Clang tools
         run: |
           python llvm/utils/squall/build.py --build-dir "$GITHUB_WORKSPACE/build" \
-            --llvm-only --static-tools --jobs 4 $(printf -- '--target %s ' $TOOLS)
-      - name: LLVM lit tests
-        run: python build/bin/llvm-lit -v llvm/test/MC/Squall llvm/test/CodeGen/Squall
+            --static-tools --ccache --jobs 4 $(printf -- '--target %s ' $TOOLS)
+      - name: Lit tests
+        run: |
+          python build/bin/llvm-lit -v llvm/test/MC/Squall llvm/test/CodeGen/Squall \
+            clang/test/CodeGen/squall.c clang/test/Preprocessor/squall.c \
+            clang/test/Driver/squall-toolchain.c
       - name: Execution tests on the Zig reference interpreter
         env:
           SQUALL_LLVM_BIN: ${{ github.workspace }}/build/bin
-        # C tests need the Squall Clang, which this LLVM-only build omits.
         run: python -m pytest -q llvm/utils/squall/tests --junitxml=results.xml
       - name: Package tools for the RTL job
-        run: tar -czf squall-tools.tar.gz -C build/bin $TOOLS
+        # Clang needs its resource headers and the Squall runtime beside the
+        # binaries.
+        run: |
+          tar -czhf squall-tools.tar.gz -C build $(printf -- 'bin/%s ' $TOOLS) \
+            lib/clang lib/clang-runtimes
       - uses: actions/upload-artifact@v4
         with:
           name: squall-llvm-tools
@@ -103,6 +123,6 @@ jobs:
           mkdir tools && tar -xzf squall-tools.tar.gz -C tools
       - name: Compiler-generated images on baseline, pipelined and production RTL
         env:
-          SQUALL_LLVM_BIN: ${{ github.workspace }}/tools
+          SQUALL_LLVM_BIN: ${{ github.workspace }}/tools/bin
           SQUALL_ISACOMP_DIR: ${{ github.workspace }}/isacomp-rtl
         run: python -m pytest -q llvm/utils/squall/tests/test_rtl.py

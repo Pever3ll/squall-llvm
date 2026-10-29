@@ -21,12 +21,16 @@ FunctionPass *createSquallISelDag(SquallTargetMachine &TM,
                                   CodeGenOptLevel OptLevel);
 ModulePass *createSquallCheckIRPass();
 ModulePass *createSquallLowerMemoryPass();
+ModulePass *createSquallLowerFloatPass();
+ModulePass *createSquallLowerAllocaPass();
 FunctionPass *createSquallForkJoinPass();
 
 void initializeSquallDAGToDAGISelLegacyPass(PassRegistry &);
 void initializeSquallAsmPrinterPass(PassRegistry &);
 void initializeSquallCheckIRPass(PassRegistry &);
 void initializeSquallLowerMemoryPass(PassRegistry &);
+void initializeSquallLowerFloatPass(PassRegistry &);
+void initializeSquallLowerAllocaPass(PassRegistry &);
 void initializeSquallForkJoinPass(PassRegistry &);
 
 namespace Squall {
@@ -46,6 +50,14 @@ constexpr unsigned NumArgRegs = 16;
 
 /// Frame-relative and absolute slot fields are unsigned 11-bit word numbers.
 constexpr unsigned MaxSlotWord = 2047;
+
+/// With -squall-fork-join, a lane that calls a function joins on its own
+/// absolute word, one of this many reserved before the globals; other lanes
+/// share one join word. Joins need words that start empty, and frame words
+/// start as constants, which a match can never empty.
+constexpr unsigned NumCallJoinWords = 32;
+/// Whether -squall-fork-join is given.
+bool isForkJoinEnabled();
 } // namespace Squall
 } // namespace llvm
 
