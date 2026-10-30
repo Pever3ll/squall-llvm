@@ -376,6 +376,9 @@ class SquallAsmPrinter : public AsmPrinter {
   MCSymbol *Halt = nullptr, *DepthError = nullptr, *MemoryError = nullptr,
            *Trap = nullptr;
   uint64_t CodeStart = 0, FrameBase = 0, ArenaEnd = 0, StackBase = 0;
+  /// Words emitted from CodeStart on: every chain word, instruction or data,
+  /// is one eight-byte word.
+  uint64_t CodeWords = 0;
   /// The previous instruction's chain, held back so that a following read of
   /// the register it just stored can be dropped: the token still carries it.
   std::optional<Chain> Pending;
@@ -421,6 +424,13 @@ private:
                                     ELF::SHF_ALLOC | ELF::SHF_WRITE |
                                         ELF::SHF_EXECINSTR);
   }
+  /// A memory size that fits Words of code and globals and still leaves the
+  /// frames and token stack the share a default layout gives them, three
+  /// quarters of memory: one frame's reach alone would fail at the first
+  /// deep call.
+  uint64_t suggestedMemory(uint64_t Words) const {
+    return alignTo(Words * 8 + MemoryBytes - MemoryBytes / 4, 65536);
+  }
   void error(const Twine &Message) {
     OutContext.reportError(SMLoc(), Twine("Squall: ") + Message);
   }
@@ -459,6 +469,7 @@ private:
       return;
     Pending->setEndPort(Port);
     Pending->emit(*OutStreamer, TM.getMCSubtargetInfo(), OutContext);
+    CodeWords += Pending->size();
     Pending.reset();
   }
 };
@@ -601,13 +612,18 @@ void SquallAsmPrinter::emitImageHeader(Module &M) {
   }
   uint64_t MemoryWords = MemoryBytes / 8;
   CodeStart = std::max<uint64_t>(MinCodeWord, alignTo(Next, 8));
+  // The frame arena starts a quarter of the way into memory, or after the
+  // code when the code is larger; emitEndOfAsmFile moves it once the code's
+  // size is known. Nothing in the code depends on where it starts.
   FrameBase = alignTo(MemoryWords / 4, 4);
   StackBase = MemoryBytes - 16;
   ArenaEnd = (StackBase - uint64_t(StackTokens) * 16) / 8;
-  if (CodeStart >= FrameBase ||
+  if (CodeStart + Squall::MaxSlotWord + 1 > ArenaEnd ||
       FrameBase + Squall::MaxSlotWord + 1 > ArenaEnd) {
-    error("globals, frames and the token stack do not fit in "
-          "-squall-memory-bytes");
+    error(Twine("the program's globals take ") + Twine(CodeStart * 8 / 1024) +
+          " KiB, leaving no room for frames in the " +
+          Twine(MemoryBytes / 1024) + " KiB image; use -squall-memory-bytes=" +
+          Twine(suggestedMemory(CodeStart)) + " or more");
     Entry = nullptr;
     return;
   }
@@ -669,6 +685,7 @@ void SquallAsmPrinter::emitImageHeader(Module &M) {
   HostReturnWord = CodeStart + HostReturn;
   StartWord = CodeStart + Start;
   Runtime.emit(*OutStreamer, TM.getMCSubtargetInfo(), OutContext);
+  CodeWords += Runtime.size();
 }
 
 void SquallAsmPrinter::expandBinary(Chain &C, const MachineInstr &MI, int Alu,
@@ -1078,6 +1095,10 @@ Chain SquallAsmPrinter::expand(const MachineInstr &Instr, unsigned Scratch) {
   case Squall::TRAP:
     C.jump(Dest::symbol(Trap));
     break;
+  case Squall::EXIT:
+    C.read(word(Op(0)));
+    C.jump(Dest::symbol(OutContext.getOrCreateSymbol("__squall_host_return")));
+    break;
   case Squall::RET:
     C.imm(Dupr, 0);
     C.send(FrameSlot, Squall::ReturnTagWord, Right);
@@ -1222,6 +1243,17 @@ void SquallAsmPrinter::emitEndOfAsmFile(Module &M) {
   if (!Entry)
     return;
   OutStreamer->switchSection(imageSection());
+  FrameBase = std::max(FrameBase, alignTo(CodeStart + CodeWords, 4));
+  // The arena must hold at least one frame's reach (an 11-bit slot field).
+  if (FrameBase + Squall::MaxSlotWord + 1 > ArenaEnd) {
+    error(Twine("the program's code and globals take ") +
+          Twine((CodeStart + CodeWords) * 8 / 1024) +
+          " KiB, leaving no room "
+          "for frames in the " +
+          Twine(MemoryBytes / 1024) + " KiB image; use -squall-memory-bytes=" +
+          Twine(suggestedMemory(CodeStart + CodeWords)) + " or more");
+    return;
+  }
   // Frame arena: the root frame's return tag names the host return stub, and
   // every other word starts as an empty constant slot.
   OutStreamer->emitValueToOffset(

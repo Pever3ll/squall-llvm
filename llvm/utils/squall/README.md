@@ -64,9 +64,18 @@ linked further.
 
 The link also includes the Squall runtime, bitcode built by `build.py` into
 `lib/clang-runtimes/squallv2` beside the compiler (`--sysroot` selects
-another): `libc.bc`, a small C library (`string.h`, `stdlib.h` without a heap,
-`ctype.h`, `assert.h`, `errno.h`, and the exact functions of `math.h`), and
-`libclang_rt.builtins.bc`, the compiler-rt soft-float builtins. Its headers
+another): `libc.bc`, a small C library, and `libclang_rt.builtins.bc`, the
+compiler-rt soft-float builtins. The C library has `string.h`, `stdlib.h`
+(without a heap; `exit` ends the program with its status as the result, as if
+the entry function returned it), `ctype.h`, `assert.h`, `errno.h`, and
+`math.h`: the exact functions are its own, and the others (`sin`, `pow`,
+`atan2`, `exp`, `log`, `fma`, and the rest, for float and double) are LLVM
+libc's header-only implementations, built from `runtime/src/libm.cpp`.
+`stdio.h` only declares `printf`, `puts`, and `putchar`: Squall has no I/O, so
+code that includes it compiles, and a call that survives to the link is
+reported as undefined. The math functions are large (with their tables, a few
+use over 100 KiB of image), so a program that calls several may need a larger
+`-squall-memory-bytes`; the compiler says how much. Its headers
 are the only system headers; the host's are never searched. `-nostdlib`
 omits both libraries and `-nolibc` the C library. Only what the program uses
 reaches the image, so a program that uses neither is unchanged. A single
@@ -127,7 +136,10 @@ not mention, so the runtime lists all of them in `llvm.compiler.used` and LTO
 keeps them; once the calls exist, the pass deletes the unused ones with the
 variables only they used, as a linker's dead stripping would.
 
-**Traps.** `__builtin_trap`, `abort`, and a failed `assert` halt with status 4.
+**Traps and exit.** `__builtin_trap`, `abort`, and a failed `assert` halt with
+status 4. The C library's `exit` and `_Exit` call `__squall_exit`, which the
+backend lowers to a jump to the host return stub with the status as the
+token's value.
 
 **Memory.** Memory is byte-addressed in four-byte little-endian cells, one per
 64-bit matching slot, so a byte address is four times a word address plus the
@@ -241,7 +253,7 @@ by default.
 | 16-47 | With `-squall-fork-join`: call join words, empty |
 | 16+ or 48+ | Globals, then the alloca area if the program uses one |
 | 256+ | Runtime stubs (`__squall_start`, host return, error stubs), then functions |
-| 1/4 of memory | Frame arena, initialized to constant zero slots |
+| 1/4 of memory, or after the code | Frame arena, initialized to constant zero slots |
 | top | Token stack, holding the start token |
 
 `.squall.config` holds a JSON description of this layout. All references
@@ -307,15 +319,20 @@ python3 ../squall-llvm-build/bin/llvm-lit -v llvm/test/CodeGen/Squall llvm/test/
   in fewer cycles on the overlapping cores.
 
 `rtl_regression.py` runs the full C matrix on every RTL configuration and writes
-a report; `--fork-join` compiles it with parallel lanes. The Zig interpreter (pinned commit `03dcc01f`) is fetched and built
+a report; `--fork-join` compiles it with parallel lanes. `embench.py` builds
+the Embench-IoT benchmarks (from a separate checkout) for Squall and the host
+and runs them on the interpreter and, with `--isacomp-dir`, the RTL: with
+Embench-IoT 1.0, all 19 pass at `-O0` and `-O2` (one repetition each; `cubic`
+needs a larger image for its math functions). The Zig interpreter (pinned commit `03dcc01f`) is fetched and built
 automatically; the RTL tests need Icarus Verilog, Verilator, and the Isacomp
 checkout pinned in `squall_tools/rtl.py`.
 
 ## Limitations
 
 * No atomics, `long double` beyond `double`, `setjmp`, heap (`malloc`), or
-  I/O; the C library is a freestanding subset, and `math.h` has only the
-  exact functions (no `sin`, `exp`, or `pow`).
+  I/O; the C library is a freestanding subset. `math.h` lacks `sinh`,
+  `cosh`, and `tanh` for double and the error and gamma functions; other
+  floating-point intrinsics without a library function are rejected.
 * Floating point raises no exceptions and does not honor rounding modes.
 * One image per program, linked from bitcode; there is no object-level linker,
   so finished `clang -c` images cannot be combined.

@@ -43,7 +43,17 @@
 ; CHECK-NOT:  @rand(
 ; CHECK-NOT:  @seed
 
-; UNDEFINED: error: {{.*}}in function undefined {{.*}}call to '__floatsisf' has no definition in this program; the Squall runtime library is linked only when clang links the program, without -c
+; Intrinsics with a C library function become calls to it; modf becomes
+; trunc, a subtraction, and sign bits.
+; CHECK-LABEL: define double @library(
+; CHECK:      %r = call double @rint(double %x)
+; CHECK-NEXT: %n = call float @nearbyintf(float %f)
+; CHECK-NEXT: %s = call double @sin(double %x)
+; CHECK-NEXT: [[WHOLE:%.*]] = call double @trunc(double %x)
+; CHECK-NEXT: [[DIFF:%.*]] = call double @__subdf3(double %x, double [[WHOLE]])
+; CHECK:      insertvalue { double, double } {{.*}}, double [[WHOLE]], 1
+
+; UNDEFINED: error: {{.*}}in function undefined {{.*}}call to '__floatsisf' has no definition in this program or the Squall runtime library, which clang adds when it links (not with -c)
 
 define i32 @main(i32 %a, i32 %b, i64 %w) {
   %f = sitofp i32 %a to float
@@ -92,3 +102,17 @@ define i32 @undefined(i32 %a) {
 declare float @llvm.fabs.f32(float)
 declare double @llvm.sqrt.f64(double)
 declare float @llvm.fmuladd.f32(float, float, float)
+
+define double @library(double %x, float %f) {
+  %r = call double @llvm.rint.f64(double %x)
+  %n = call float @llvm.nearbyint.f32(float %f)
+  %s = call double @llvm.sin.f64(double %x)
+  %m = call { double, double } @llvm.modf.f64(double %x)
+  %frac = extractvalue { double, double } %m, 0
+  ret double %frac
+}
+
+declare double @llvm.rint.f64(double)
+declare float @llvm.nearbyint.f32(float)
+declare double @llvm.sin.f64(double)
+declare { double, double } @llvm.modf.f64(double)

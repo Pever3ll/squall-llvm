@@ -7,6 +7,11 @@
 ; TRAP-NEXT:  dupr ({{-?[0-9]+}}).{{[lr]}} #4
 ; TRAP-LABEL: main:
 ; TRAP:       dupl __squall_trap.l #0
+; exit (a call to __squall_exit) ends the program through the host return
+; stub, which writes its value as the result.
+; TRAP-LABEL: bye:
+; TRAP:       dupr.r (1).l [3]
+; TRAP-NEXT:  dupl __squall_host_return.l #0
 ; TRAP:       .ascii {{.*}}"trap\":4
 
 ; Variadic arguments are read from the argument registers' frame words:
@@ -63,3 +68,10 @@ define i32 @vla(i32 %n) {
 declare void @llvm.trap()
 declare void @llvm.va_start.p0(ptr)
 declare void @llvm.va_end.p0(ptr)
+
+declare void @__squall_exit(i32)
+
+define void @bye(i32 %code) {
+  call void @__squall_exit(i32 %code)
+  unreachable
+}

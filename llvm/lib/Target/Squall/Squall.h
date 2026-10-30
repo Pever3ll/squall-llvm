@@ -58,6 +58,10 @@ constexpr unsigned MaxSlotWord = 2047;
 constexpr unsigned NumCallJoinWords = 32;
 /// Whether -squall-fork-join is given.
 bool isForkJoinEnabled();
+
+/// A call to this function, `void __squall_exit(int)`, ends the program with
+/// its argument as the result (the C library's exit and _Exit).
+constexpr const char ExitFunction[] = "__squall_exit";
 } // namespace Squall
 } // namespace llvm
 

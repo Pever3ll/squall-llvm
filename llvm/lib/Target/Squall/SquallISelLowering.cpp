@@ -340,6 +340,12 @@ SquallTargetLowering::LowerCall(CallLoweringInfo &CLI,
   const Function *Callee = nullptr;
   if (auto *G = dyn_cast<GlobalAddressSDNode>(CLI.Callee))
     Callee = dyn_cast<Function>(G->getGlobal());
+  // The C library's exit() ends the program from any depth: the value goes
+  // to the host return stub, as if the entry function returned it.
+  if (Callee && Callee->getName() == Squall::ExitFunction &&
+      CLI.OutVals.size() == 1)
+    return DAG.getNode(SquallISD::EXIT, DL, MVT::Other, CLI.Chain,
+                       CLI.OutVals[0]);
   std::string Undefined;
   // Calls that code generation introduces (libcalls) name their target; the
   // runtime library linked into the program defines it.

@@ -193,13 +193,83 @@ Value *SquallLowerFloat::lowerClassTest(IRBuilder<> &B, Value *V,
     else if (Mask & Pos)
       Add(B.CreateAnd(B.CreateNot(Negative), Class));
   };
-  Signed(fcNegInf, fcPosInf, EQ(Inf));
-  Value *Normal = B.CreateICmpUGE(Abs, ConstantInt::get(IT, MinNormal));
-  Signed(fcNegNormal, fcPosNormal, Between(Normal, ULT(Inf)));
-  Value *Nonzero = B.CreateICmpNE(Abs, ConstantInt::get(IT, 0));
-  Signed(fcNegSubnormal, fcPosSubnormal, Between(Nonzero, ULT(MinNormal)));
-  Signed(fcNegZero, fcPosZero, EQ(APInt(Bits, 0)));
+  if (Mask & fcInf)
+    Signed(fcNegInf, fcPosInf, EQ(Inf));
+  if (Mask & fcNormal) {
+    Value *Normal = B.CreateICmpUGE(Abs, ConstantInt::get(IT, MinNormal));
+    Signed(fcNegNormal, fcPosNormal, Between(Normal, ULT(Inf)));
+  }
+  if (Mask & fcSubnormal) {
+    Value *Nonzero = B.CreateICmpNE(Abs, ConstantInt::get(IT, 0));
+    Signed(fcNegSubnormal, fcPosSubnormal, Between(Nonzero, ULT(MinNormal)));
+  }
+  if (Mask & fcZero)
+    Signed(fcNegZero, fcPosZero, EQ(APInt(Bits, 0)));
   return Result;
+}
+
+/// The C library function (double version) that computes an intrinsic, if
+/// any. SelectionDAG would expand these into calls by a libcall table that
+/// Squall does not have, so they are calls in IR.
+static StringRef libraryFunction(Intrinsic::ID ID) {
+  switch (ID) {
+  case Intrinsic::sqrt:
+    return "sqrt";
+  case Intrinsic::floor:
+    return "floor";
+  case Intrinsic::ceil:
+    return "ceil";
+  case Intrinsic::trunc:
+    return "trunc";
+  case Intrinsic::round:
+    return "round";
+  case Intrinsic::rint:
+    return "rint";
+  case Intrinsic::nearbyint:
+    return "nearbyint";
+  case Intrinsic::minnum:
+    return "fmin";
+  case Intrinsic::maxnum:
+    return "fmax";
+  case Intrinsic::sin:
+    return "sin";
+  case Intrinsic::cos:
+    return "cos";
+  case Intrinsic::tan:
+    return "tan";
+  case Intrinsic::asin:
+    return "asin";
+  case Intrinsic::acos:
+    return "acos";
+  case Intrinsic::atan:
+    return "atan";
+  case Intrinsic::atan2:
+    return "atan2";
+  case Intrinsic::sinh:
+    return "sinh";
+  case Intrinsic::cosh:
+    return "cosh";
+  case Intrinsic::tanh:
+    return "tanh";
+  case Intrinsic::exp:
+    return "exp";
+  case Intrinsic::exp2:
+    return "exp2";
+  case Intrinsic::log:
+    return "log";
+  case Intrinsic::log2:
+    return "log2";
+  case Intrinsic::log10:
+    return "log10";
+  case Intrinsic::pow:
+    return "pow";
+  case Intrinsic::fma:
+    return "fma";
+  case Intrinsic::ldexp:
+    return "ldexp";
+  default:
+    return "";
+  }
 }
 
 bool SquallLowerFloat::lower(Instruction &I) {
@@ -342,28 +412,44 @@ bool SquallLowerFloat::lower(Instruction &I) {
     case Intrinsic::arithmetic_fence:
       New = II->getArgOperand(0);
       break;
-    case Intrinsic::sqrt:
-      New = Library("sqrt");
+    case Intrinsic::modf: {
+      // {fraction, integral part}: the fraction is x - trunc(x) with the
+      // sign of x, and zero for infinities; NaN propagates through both.
+      Value *X = II->getArgOperand(0);
+      Value *Whole = call(B, T->isFloatTy() ? "truncf" : "trunc", T, {X});
+      Value *Difference =
+          call(B, ("__sub" + suffix(T) + "3").str(), T, {X, Whole});
+      Value *Infinite = lowerClassTest(B, X, fcInf);
+      Value *Fraction =
+          B.CreateSelect(Infinite, ConstantFP::get(T, 0.0), Difference);
+      Value *Magnitude =
+          B.CreateAnd(Bits(Fraction), ConstantInt::get(IT, ~Sign));
+      Value *SignOf = B.CreateAnd(Bits(X), ConstantInt::get(IT, Sign));
+      Fraction = B.CreateBitCast(B.CreateOr(Magnitude, SignOf), T);
+      Value *Pair = B.CreateInsertValue(PoisonValue::get(Ty), Fraction, 0);
+      New = B.CreateInsertValue(Pair, Whole, 1);
       break;
-    case Intrinsic::floor:
-      New = Library("floor");
+    }
+    case Intrinsic::frexp: {
+      // {mantissa, exponent}, from the library function and a stack slot.
+      Type *ExpType = cast<StructType>(Ty)->getElementType(1);
+      IRBuilder<> Entry(
+          &*I.getFunction()->getEntryBlock().getFirstInsertionPt());
+      Value *Slot = Entry.CreateAlloca(B.getInt32Ty(), nullptr, "frexp.exp");
+      Value *Mantissa = call(B, T->isFloatTy() ? "frexpf" : "frexp", T,
+                             {II->getArgOperand(0), Slot});
+      Value *Exp =
+          B.CreateSExtOrTrunc(B.CreateLoad(B.getInt32Ty(), Slot), ExpType);
+      Value *Pair = B.CreateInsertValue(PoisonValue::get(Ty), Mantissa, 0);
+      New = B.CreateInsertValue(Pair, Exp, 1);
       break;
-    case Intrinsic::ceil:
-      New = Library("ceil");
-      break;
-    case Intrinsic::trunc:
-      New = Library("trunc");
-      break;
-    case Intrinsic::round:
-      New = Library("round");
-      break;
-    case Intrinsic::minnum:
-      New = Library("fmin");
-      break;
-    case Intrinsic::maxnum:
-      New = Library("fmax");
-      break;
+    }
     default:
+      if (StringRef Name = libraryFunction(II->getIntrinsicID());
+          !Name.empty()) {
+        New = Library(Name);
+        break;
+      }
       return false; // The IR checker reports the rest.
     }
   } else {

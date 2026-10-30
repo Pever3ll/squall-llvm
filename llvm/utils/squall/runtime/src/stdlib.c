@@ -180,3 +180,8 @@ int rand(void) {
 void srand(unsigned seed) { next = seed; }
 
 _Noreturn void abort(void) { __builtin_trap(); }
+
+// The backend ends the program at a call to __squall_exit.
+_Noreturn void __squall_exit(int status);
+_Noreturn void exit(int status) { __squall_exit(status); }
+_Noreturn void _Exit(int status) { __squall_exit(status); }
