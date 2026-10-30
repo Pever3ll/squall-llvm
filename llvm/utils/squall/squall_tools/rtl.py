@@ -124,7 +124,8 @@ def execution_order_matches(actual, expected, manifest):
 
 
 def run_rtl(directory, *, isacomp=None, cache=None, reference=None,
-            variant="baseline", memory_latency=5, stall_seed=0, stall_jitter=0, expected_status=1):
+            variant="baseline", memory_latency=5, stall_seed=0, stall_jitter=0, expected_status=1,
+            timeout=60):
     if not 0 <= stall_seed < 1 << 31 or not 0 <= stall_jitter <= 200:
         raise RuntimeError("stall seed must fit positive i32 and jitter must be in [0, 200]")
     if stall_jitter and (variant != "production" or not memory_latency):
@@ -154,7 +155,7 @@ def run_rtl(directory, *, isacomp=None, cache=None, reference=None,
         stem += f"-seed{stall_seed}-jitter{stall_jitter}"
     trace_path = directory / f"{stem}.trace"
     try:
-        simulation = subprocess.run(command, cwd=directory, capture_output=True, text=True, timeout=60)
+        simulation = subprocess.run(command, cwd=directory, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         partial = exc.stdout or b""
         trace_path.write_text(partial.decode(errors="replace") if isinstance(partial, bytes) else partial)

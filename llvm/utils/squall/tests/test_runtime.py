@@ -194,6 +194,32 @@ def test_frexp_ldexp_modf_match_host(tmp_path):
 
 @requires_runtime
 @pytest.mark.parametrize("level", ["-O0", "-O2"])
+@pytest.mark.parametrize("exponent,high", [
+    ("i64 4294967296", 0x7FF00000), ("i64 -4294967296", 0), ("i64 3", 0x40200000),
+    ("i16 -2", 0x3FD00000), ("i32 1024", 0x7FF00000),
+])
+def test_ldexp_exponents_of_every_width(tmp_path, level, exponent, high):
+    """The library's ldexp takes an int; wider exponents clamp, which gives
+    the same saturated result, and narrower ones sign-extend."""
+    width = exponent.split()[0]
+    source = tmp_path / "ldexp.ll"
+    source.write_text(f"""define i32 @main() {{
+  %r = call double @llvm.ldexp.f64.{width}(double 1.0, {exponent})
+  %bits = bitcast double %r to i64
+  %top = lshr i64 %bits, 32
+  %t = trunc i64 %top to i32
+  ret i32 %t
+}}
+declare double @llvm.ldexp.f64.{width}(double, {width})
+""")
+    image = link(tmp_path, [source], "main", level)
+    load(image, tmp_path / "run")
+    result = run_image(tmp_path / "run")
+    assert result["status"] == 1 and result["result"] == i32(high), result
+
+
+@requires_runtime
+@pytest.mark.parametrize("level", ["-O0", "-O2"])
 def test_exit_ends_the_program_with_its_status(tmp_path, level):
     source = tmp_path / "exit.c"
     source.write_text("""#include <stdlib.h>
@@ -240,15 +266,18 @@ int main(void) {
 
 
 @requires_runtime
-@pytest.mark.parametrize("cells,fits", [(30000, True), (70000, False)])
-def test_large_programs_move_the_frame_arena(tmp_path, cells, fits):
-    """Code and globals past a quarter of memory push the frame arena up; a
-    program that leaves no room for frames is told the size it needs."""
+@pytest.mark.parametrize("cells,fits,aligned", [(30000, True, False), (30000, True, True), (70000, False, False)])
+def test_large_programs_move_the_frame_arena(tmp_path, cells, fits, aligned):
+    """Code and globals past a quarter of memory push the frame arena up,
+    past any alignment padding; a program that leaves no room for frames is
+    told the size it needs."""
     source = tmp_path / "large.c"
+    attribute = "__attribute__((aligned(256))) " if aligned else ""
     source.write_text(f"""static int table[{cells}] = {{1, 2, 3}};
+{attribute}int last(void) {{ return table[{cells} - 1]; }}
 int main(int i) {{
   table[i] += 40;
-  return table[i] + table[{cells} - 1];
+  return table[i] + last();
 }}
 """)
     run = subprocess.run([clang(), "--target=squallv2", "-O2", str(source), "-o", str(tmp_path / "large.o")],

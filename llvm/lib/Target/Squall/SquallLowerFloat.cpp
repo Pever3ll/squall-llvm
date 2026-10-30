@@ -265,8 +265,6 @@ static StringRef libraryFunction(Intrinsic::ID ID) {
     return "pow";
   case Intrinsic::fma:
     return "fma";
-  case Intrinsic::ldexp:
-    return "ldexp";
   default:
     return "";
   }
@@ -428,6 +426,24 @@ bool SquallLowerFloat::lower(Instruction &I) {
       Fraction = B.CreateBitCast(B.CreateOr(Magnitude, SignOf), T);
       Value *Pair = B.CreateInsertValue(PoisonValue::get(Ty), Fraction, 0);
       New = B.CreateInsertValue(Pair, Whole, 1);
+      break;
+    }
+    case Intrinsic::ldexp: {
+      // The library takes an int exponent. Results saturate long before 2^31
+      // (to infinity or zero), so a clamped exponent gives the same value.
+      Value *E = II->getArgOperand(1);
+      if (E->getType()->getIntegerBitWidth() > 32) {
+        Type *Wide = E->getType();
+        Value *Low = ConstantInt::getSigned(Wide, INT32_MIN);
+        Value *High = ConstantInt::get(Wide, INT32_MAX);
+        Value *TooLow = B.CreateICmpSLT(E, Low);
+        E = B.CreateSelect(TooLow, Low, E);
+        Value *TooHigh = B.CreateICmpSGT(E, High);
+        E = B.CreateSelect(TooHigh, High, E);
+      }
+      E = B.CreateSExtOrTrunc(E, B.getInt32Ty());
+      New = call(B, T->isFloatTy() ? "ldexpf" : "ldexp", T,
+                 {II->getArgOperand(0), E});
       break;
     }
     case Intrinsic::frexp: {

@@ -385,6 +385,7 @@ class SquallAsmPrinter : public AsmPrinter {
   bool LaidOut = false;
   unsigned GlobalBase = FirstGlobalWord; // First word of the globals.
   void emitImageHeader(Module &M);
+  void countPadding(Align Alignment);
   unsigned HostReturnWord = 0, StartWord = 0;
   /// Parallel lanes (see SquallForkJoin): the scratch word of the lane being
   /// emitted, and the labels of each region's second lane and join.
@@ -417,6 +418,7 @@ public:
   void emitInstruction(const MachineInstr *MI) override;
   void emitBasicBlockEnd(const MachineBasicBlock &MBB) override;
   void emitFunctionEntryLabel() override;
+  void emitBasicBlockStart(const MachineBasicBlock &MBB) override;
 
 private:
   MCSection *imageSection() {
@@ -897,7 +899,23 @@ void SquallAsmPrinter::expandCall(Chain &C, const MachineInstr &MI) {
   }
 }
 
+// Alignment padding before a function or block is emitted by the generic
+// printer, not through chains. Count the most it can be, so the frame arena
+// always starts past the code; the exact amount depends on the assembler.
+void SquallAsmPrinter::countPadding(Align Alignment) {
+  if (Alignment.value() > 8)
+    CodeWords += Alignment.value() / 8 - 1;
+}
+
+void SquallAsmPrinter::emitBasicBlockStart(const MachineBasicBlock &MBB) {
+  countPadding(MBB.getAlignment());
+  AsmPrinter::emitBasicBlockStart(MBB);
+}
+
 void SquallAsmPrinter::emitFunctionEntryLabel() {
+  // The function's alignment was emitted just before its label.
+  countPadding(
+      std::max(MF->getAlignment(), MF->getFunction().getAlign().valueOrOne()));
   AsmPrinter::emitFunctionEntryLabel();
   OutStreamer->emitLabel(entryLabel(MF->getFunction()));
 }

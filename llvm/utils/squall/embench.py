@@ -87,6 +87,8 @@ def main():
     parser.add_argument("--opt", nargs="+", default=["2"], choices=["0", "1", "2", "s", "z"])
     parser.add_argument("--host-clang", default=shutil.which("clang"), help="independent host C compiler")
     parser.add_argument("--isacomp-dir", type=Path, help="also run on the RTL cores of this checkout")
+    parser.add_argument("--rtl-timeout", type=int, default=3600,
+                        help="seconds per RTL simulation (benchmarks run for millions of cycles)")
     parser.add_argument("benchmarks", nargs="*", help="benchmark names (default: all)")
     args = parser.parse_args()
     names = args.benchmarks or sorted(p.name for p in (args.embench / "src").iterdir() if p.is_dir())
@@ -119,21 +121,31 @@ def main():
                 row.update(tokens=result["cycles"], seconds=round(time.time() - start, 1),
                            squall="pass" if (result["status"], result["result"]) == (1, 1) else
                            f"status {result['status']} result {result['result']}")
-                if args.isacomp_dir and manifest["memory_bytes"] <= 512 * 1024:
+                if args.isacomp_dir and manifest["memory_bytes"] > 512 * 1024:
+                    row["rtl"] = "skipped: the RTL harness takes images up to 512 KiB"
+                elif args.isacomp_dir:
                     from squall_tools.rtl import run_rtl
                     row["rtl"] = {}
                     for variant, latency in [("baseline", 0), ("pipeline", 0), ("production", 5)]:
                         try:
                             r = run_rtl(directory, isacomp=args.isacomp_dir, variant=variant,
-                                        memory_latency=latency)
+                                        memory_latency=latency, timeout=args.rtl_timeout)
                             row["rtl"][variant] = "pass" if (r["status"], r["result"]) == (1, 1) else "fail"
                         except RuntimeError as exc:
                             row["rtl"][variant] = f"error: {str(exc)[:200]}"
+            # A run passes only if the host build, the interpreter, and every
+            # RTL core that ran agree that the benchmark verified.
+            rtl = row.get("rtl")
+            row["verdict"] = ("pass" if row["host"] == "1" and row["squall"] == "pass" and
+                              (not isinstance(rtl, dict) or all(v == "pass" for v in rtl.values()))
+                              else "fail")
             rows.append(row)
             print(json.dumps(row), flush=True)
     (args.output / "results.json").write_text(json.dumps(rows, indent=2) + "\n")
-    passed = sum(r["squall"] == "pass" for r in rows)
-    print(f"{passed} of {len(rows)} benchmark runs passed")
+    passed = sum(r["verdict"] == "pass" for r in rows)
+    skipped = sum(isinstance(r.get("rtl"), str) for r in rows)
+    print(f"{passed} of {len(rows)} benchmark runs passed" +
+          (f" ({skipped} too large for the RTL harness ran on the interpreter only)" if skipped else ""))
     return 0 if passed == len(rows) else 1
 
 
