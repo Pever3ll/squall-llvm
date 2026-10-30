@@ -565,3 +565,49 @@ def test_byte_initializers_and_interior_pointers(tmp_path, opt):
       %s7 = add i32 %s6, %h32
       ret i32 %s7
     }""", expected=i32((((108 - 1 - 300 + 7000 + 123456) ^ -559038737) + 4660)), opt=opt)
+
+
+# Floating-point stores below cell alignment are split into bytes, keeping
+# their bit pattern; zero-extending them, as for integers, is invalid IR.
+PACKED_FLOAT = """@g = global [16 x i8] zeroinitializer, align 4
+define i32 @main(i32 %bits, i32 %offset) {
+  %p = getelementptr [16 x i8], ptr @g, i32 0, i32 %offset
+  %f = bitcast i32 %bits to float
+  store volatile float %f, ptr %p, align 1
+  %wide = zext i32 %bits to i64
+  %high = shl i64 %wide, 32
+  %d = bitcast i64 %high to double
+  %q = getelementptr i8, ptr %p, i32 4
+  store volatile double %d, ptr %q, align 1
+  %v = load volatile float, ptr %p, align 1
+  %vb = bitcast float %v to i32
+  %hi = getelementptr i8, ptr %q, i32 4
+  %h = load volatile i32, ptr %hi, align 1
+  %r = xor i32 %vb, %h
+  %s = xor i32 %r, 1
+  ret i32 %s
+}"""
+
+
+@pytest.mark.parametrize("offset", [1, 2, 3])
+def test_packed_floating_point_stores(tmp_path, opt, offset):
+    # The float reads back as its bits; the double's high word is the same
+    # bits, so their xor leaves only the final 1.
+    execute(tmp_path, PACKED_FLOAT, [0x3FC00000, offset], 1, opt=opt)
+
+
+# The alloca area is exhausted, not wrapped, by counts whose byte size
+# overflows 32 bits, before or after rounding to whole cells.
+@pytest.mark.parametrize("element,count,status", [
+    ("i32", 1023, 1), ("i32", 1024, 1), ("i32", 1025, 4), ("i32", 1073741824, 4),
+    ("i8", 4096, 1), ("i8", 4097, 4), ("i8", 4294967295, 4), ("i64", 536870912, 4),
+])
+def test_alloca_size_overflow_traps(tmp_path, opt, element, count, status):
+    to_i32 = {"i8": "zext i8 %v to i32", "i32": "add i32 %v, 0", "i64": "trunc i64 %v to i32"}
+    execute(tmp_path, f"""define i32 @main(i32 %n) {{
+      %a = alloca {element}, i32 %n, align 4
+      store volatile {element} 42, ptr %a, align 4
+      %v = load volatile {element}, ptr %a, align 4
+      %r = {to_i32[element]}
+      ret i32 %r
+    }}""", [count], 42 if status == 1 else None, status=status, opt=opt)

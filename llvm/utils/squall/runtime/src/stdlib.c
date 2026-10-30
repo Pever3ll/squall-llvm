@@ -18,13 +18,15 @@ lldiv_t lldiv(long long n, long long d) { return (lldiv_t){n / d, n % d}; }
 
 // Converts the digits after an optional sign and base prefix. Values are
 // accumulated unsigned and clamped to Limit, the magnitude bound of the
-// result type; *Negative reports the sign.
+// result type; *Negative reports the sign, and *Overflow whether the
+// magnitude exceeded Limit (errno alone cannot tell: it may already be set).
 static unsigned long long convert(const char *s, char **end, int base,
-                                  unsigned long long limit, int *negative) {
+                                  unsigned long long limit, int *negative,
+                                  int *overflow) {
   const char *p = s;
   while (isspace(*p))
     ++p;
-  *negative = 0;
+  *negative = *overflow = 0;
   if (*p == '+' || *p == '-')
     *negative = *p++ == '-';
   if ((base == 0 || base == 16) && p[0] == '0' && (p[1] | 32) == 'x' &&
@@ -41,7 +43,7 @@ static unsigned long long convert(const char *s, char **end, int base,
     return 0;
   }
   unsigned long long value = 0;
-  int any = 0, overflow = 0;
+  int any = 0;
   for (;; ++p) {
     int digit;
     if (isdigit(*p))
@@ -54,13 +56,13 @@ static unsigned long long convert(const char *s, char **end, int base,
       break;
     any = 1;
     if (value > (limit - (unsigned)digit) / (unsigned)base)
-      overflow = 1;
+      *overflow = 1;
     else
       value = value * (unsigned)base + (unsigned)digit;
   }
   if (end)
     *end = (char *)(any ? p : s);
-  if (overflow) {
+  if (*overflow) {
     errno = ERANGE;
     return limit;
   }
@@ -68,9 +70,9 @@ static unsigned long long convert(const char *s, char **end, int base,
 }
 
 long long strtoll(const char *restrict s, char **restrict end, int base) {
-  int negative;
-  unsigned long long v =
-      convert(s, end, base, (unsigned long long)LLONG_MAX + 1, &negative);
+  int negative, overflow;
+  unsigned long long v = convert(
+      s, end, base, (unsigned long long)LLONG_MAX + 1, &negative, &overflow);
   if (!negative && v > LLONG_MAX) {
     errno = ERANGE;
     return LLONG_MAX;
@@ -78,17 +80,22 @@ long long strtoll(const char *restrict s, char **restrict end, int base) {
   return negative ? (long long)(0 - v) : (long long)v;
 }
 
+// An out-of-range magnitude saturates to the maximum whatever its sign; a
+// representable one is negated in the unsigned type.
 unsigned long long strtoull(const char *restrict s, char **restrict end,
                             int base) {
-  int negative;
-  unsigned long long v = convert(s, end, base, ULLONG_MAX, &negative);
+  int negative, overflow;
+  unsigned long long v =
+      convert(s, end, base, ULLONG_MAX, &negative, &overflow);
+  if (overflow)
+    return ULLONG_MAX;
   return negative ? 0 - v : v;
 }
 
 long strtol(const char *restrict s, char **restrict end, int base) {
-  int negative;
-  unsigned long long v =
-      convert(s, end, base, (unsigned long long)LONG_MAX + 1, &negative);
+  int negative, overflow;
+  unsigned long long v = convert(s, end, base, (unsigned long long)LONG_MAX + 1,
+                                 &negative, &overflow);
   if (!negative && v > LONG_MAX) {
     errno = ERANGE;
     return LONG_MAX;
@@ -97,8 +104,10 @@ long strtol(const char *restrict s, char **restrict end, int base) {
 }
 
 unsigned long strtoul(const char *restrict s, char **restrict end, int base) {
-  int negative;
-  unsigned long long v = convert(s, end, base, ULONG_MAX, &negative);
+  int negative, overflow;
+  unsigned long long v = convert(s, end, base, ULONG_MAX, &negative, &overflow);
+  if (overflow)
+    return ULONG_MAX;
   return (unsigned long)(negative ? 0 - v : v);
 }
 

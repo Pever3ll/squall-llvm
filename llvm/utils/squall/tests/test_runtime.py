@@ -21,6 +21,7 @@ LIBC = {
     "strings": [(0,), (1,), (5,), (26,), (39,), (-17,)],
     "search": [(i,) for i in range(6)],
     "parse": [(i,) for i in range(12)],
+    "unsigned_limits": [(i,) for i in range(6)],
     "sorting": [(0,), (1,), (12345,), (-99,)],
     "classes": [(c,) for c in (0, 9, 10, 32, 48, 57, 65, 70, 90, 95, 97, 102, 122, 126, 127)],
     "arithmetic": [(0,), (1,), (-7,), (100,), (-123457,)],
@@ -118,6 +119,29 @@ def test_exhausted_alloca_area_traps(tmp_path, level):
     load(image, tmp_path / "larger", [2000])
     result = run_image(tmp_path / "larger")
     assert result["status"] == 1 and result["result"] == 2002, result
+
+
+@requires_runtime
+@pytest.mark.parametrize("text,value,overflow", [
+    ("-4294967296", 0xFFFFFFFF, True), ("-99999999999", 0xFFFFFFFF, True),
+    ("4294967296", 0xFFFFFFFF, True), ("-4294967295", 1, False), ("-1", 0xFFFFFFFF, False),
+])
+def test_strtoul_saturates_on_overflow(tmp_path, text, value, overflow):
+    """long is 32 bits on Squall (64 on most hosts), so strtoul is checked
+    against fixed values rather than the host."""
+    source = tmp_path / "strtoul.c"
+    source.write_text(f"""#include <errno.h>
+#include <stdlib.h>
+int main(void) {{
+  errno = 0;
+  unsigned long v = strtoul("{text}", 0, 10);
+  return (v == {value}u) + 2 * (errno == ERANGE);
+}}
+""")
+    image = link(tmp_path, [source], "main", "-O0")
+    load(image, tmp_path / "run")
+    result = run_image(tmp_path / "run")
+    assert result["status"] == 1 and result["result"] == 1 + 2 * overflow, result
 
 
 @requires_runtime

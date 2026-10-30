@@ -179,8 +179,12 @@ void SquallLowerMemory::lowerStore(StoreInst *S) {
   IRBuilder<> B(S);
   Value *V = S->getValueOperand();
   unsigned Bytes = DL->getTypeStoreSize(V->getType());
+  // The bytes to store, as an integer: floating-point values keep their bit
+  // pattern, and narrow integers (i1) are widened to their store size.
   if (V->getType()->isPointerTy())
     V = B.CreatePtrToInt(V, B.getIntNTy(Bytes * 8));
+  else if (V->getType()->isFloatingPointTy())
+    V = B.CreateBitCast(V, B.getIntNTy(Bytes * 8));
   else
     V = B.CreateZExt(V, B.getIntNTy(Bytes * 8));
   // Pieces that never straddle a cell boundary.

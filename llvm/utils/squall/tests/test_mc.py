@@ -89,6 +89,13 @@ def test_separated_secondary_port_spelling(tmp_path):
     assert a == b
 
 
+def test_dotted_labels_keep_components_that_are_not_ports(tmp_path):
+    # "loop.x.l" is label "loop.x" with port .l; "next.x.l.r" adds a secondary.
+    _, words = text_section(tmp_path, "loop.x: add loop.x.l #1\nnext.x: add.r next.x.l.r [4]\n")
+    assert (words[0] >> 43) & 0xfffff == 0 and words[0] >> 63 == 0
+    assert (words[1] >> 43) & 0xfffff == 0 and (words[1] >> 8) & 3 == 0b11
+
+
 def test_forward_and_backward_labels_resolve_without_relocations(tmp_path):
     obj, words = text_section(tmp_path, "top: add later.l #1\nlater: dupl top.r #0\n")
     assert run_tool("llvm-readobj", "-r", obj).stdout.count("R_SQUALL") == 0

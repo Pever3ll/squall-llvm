@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <ctype.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -68,6 +69,17 @@ int parse(int which) {
                (unsigned)(c ^ c >> 32) + (unsigned)wide_used * 7u +
                (unsigned)(d ^ d >> 32) + (unsigned)(e & 0xffu) +
                (unsigned)atoi(s));
+}
+
+// Out-of-range magnitudes saturate whatever their sign; representable
+// negative ones are negated in the unsigned type.
+int unsigned_limits(int which) {
+  static const char *const inputs[] = {
+      "-18446744073709551616", "-18446744073709551615",   "-1",
+      "18446744073709551616",  "99999999999999999999999", "-0"};
+  errno = 0;
+  unsigned long long v = strtoull(inputs[(unsigned)which % 6], NULL, 10);
+  return (int)(v ^ v >> 32) ^ (errno == ERANGE) << 30;
 }
 
 static int ascending(const void *a, const void *b) {

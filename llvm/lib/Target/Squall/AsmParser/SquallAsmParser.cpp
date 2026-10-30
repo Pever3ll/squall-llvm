@@ -40,8 +40,12 @@ class Parser : public MCTargetAsmParser {
       if (P.getTok().isNot(AsmToken::Identifier))
         return error("expected instruction label or parenthesized word offset");
       StringRef Full = P.getTok().getString();
+      // The ports are the final ".l"/".r", preceded by a secondary ".l"/".r"
+      // only when that component is a port: "loop.x.l" is label "loop.x".
+      // "a.l.r" reads as label "a" with ports ".l.r", not label "a.l".
       size_t Dot = Full.rfind('.');
-      if (Dot != StringRef::npos && Dot >= 2 && Full[Dot - 2] == '.')
+      if (Dot != StringRef::npos && Dot >= 2 && Full[Dot - 2] == '.' &&
+          (Full[Dot - 1] == 'l' || Full[Dot - 1] == 'r'))
         Dot -= 2;
       if (Dot == StringRef::npos)
         return error("destination must end in .l or .r");
