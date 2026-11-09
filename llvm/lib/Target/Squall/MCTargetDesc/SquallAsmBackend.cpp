@@ -7,6 +7,7 @@
 #include "llvm/MC/MCSection.h"
 #include "llvm/MC/MCValue.h"
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/EndianStream.h"
 #include "llvm/Support/MathExtras.h"
 using namespace llvm;
 namespace {
@@ -77,10 +78,15 @@ public:
     if (Count % 8)
       return false;
     // Padding is never executed: no single word can pass on a token arriving
-    // on either port unchanged, so code generation jumps over it. Zero words
-    // stop a token that reaches it by mistake (each sends to itself) rather
-    // than deliver it with a changed value or port.
-    O.write_zeros(Count);
+    // on either port unchanged, so code generation jumps over it. A token
+    // that reaches padding by mistake is discarded: each word is `write 0
+    // 0x00`, a Write with an empty byte mask and no acknowledgement, which
+    // stores nothing and forms no token. The program then drains without a
+    // status. (A zero word would be `nop (0).l #0`, which sends the token to
+    // itself forever: on hardware, a hang with nothing to observe.)
+    for (uint64_t I = 0; I < Count; I += 8)
+      support::endian::write<uint64_t>(O, Squall::PaddingWord,
+                                       llvm::endianness::little);
     return true;
   }
 };

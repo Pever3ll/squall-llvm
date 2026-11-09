@@ -44,7 +44,7 @@ void SquallFrameLowering::emitPrologue(MachineFunction &MF,
   unsigned Base = alignTo(Squall::FirstRegWord + UsedRegs, AlignWords);
   uint64_t Words = alignTo(Base + MFI.getStackSize() / 4, AlignWords);
   // The callee's return tag and arguments also live at frame-relative words
-  // past this frame, so leave room for them inside the 11-bit slot field.
+  // past this frame, so leave room for them inside the frame slot reach.
   if (Words + Squall::FirstRegWord + Squall::NumArgRegs > Squall::MaxSlotWord)
     MF.getFunction().getContext().diagnose(DiagnosticInfoUnsupported(
         MF.getFunction(), "Squall activation frame exceeds 2000 words"));

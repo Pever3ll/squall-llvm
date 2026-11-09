@@ -37,6 +37,7 @@
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCContext.h"
@@ -51,6 +52,7 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/VCSRevision.h"
 #include "llvm/Target/TargetMachine.h"
 #include <numeric>
 #include <set>
@@ -929,7 +931,10 @@ void SquallAsmPrinter::expandMemory(Chain &C, const MachineInstr &MI,
   Stub = C.jump(Dest());
   C[Stub].Detached = true;
   C[Stub].D = Dest::item(C.readAbs(PointerBox));
-  uint64_t Limit = MemoryBytes / 2; // Logical bytes of physical memory.
+  // The frame arena is the last region a pointer may name. Above it is the
+  // token stack: a load there reads tokens, and a store overwrites one (or
+  // parks on a word whose presence bits are empty and never returns).
+  uint64_t Limit = ArenaEnd * 4; // Logical byte address of the arena's end.
   int Check;
   if (Limit < UINT64_C(1) << 31) {
     Check = C.imm(Sub, Limit);
@@ -986,8 +991,19 @@ void SquallAsmPrinter::expandCall(Chain &C, const MachineInstr &MI) {
   bool Indirect = Opcode == Squall::CALLI || Opcode == Squall::CALLIR;
   unsigned CalleeOp = HasResult ? 1 : 0;
 
-  // New FP + 2048 must not pass the arena end; the callee can address any
-  // word below its FP + 2048 with an 11-bit frame slot.
+  // A null function pointer is word 0, the discard destination: sending to
+  // it would end the program with no result and no status. Trap instead.
+  // (Bits 29-31 of a pointer fall in the tag's unused bits, and registers
+  // hold nothing above bit 31, so no other masking is needed.)
+  if (Indirect) {
+    C.read(word(MI.getOperand(CalleeOp)));
+    C.branch(Dest());
+    int Null = C.jump(Dest::symbol(Trap));
+    C[Null].Detached = true;
+  }
+
+  // New FP + MaxSlotWord must stay inside the arena: the callee may address
+  // any word up to its FP + MaxSlotWord with a frame slot.
   int64_t Limit = int64_t(ArenaEnd) - (FrameWords + Squall::MaxSlotWord);
   C.extract(Dest::symbol(Halt));
   C.imm(Shrl, TagFPShift); // The frame pointer of the current token.
@@ -1372,9 +1388,30 @@ json::Object SquallAsmPrinter::manifest(const Module &M) const {
   for (const GlobalVariable &G : M.globals())
     if (auto It = GlobalWords.find(&G); It != GlobalWords.end())
       Globals[G.getName()] = It->second;
+  // Provenance: which compiler built the image, and which RTL revision its
+  // encoding, tag layout and slot semantics are those of. A loader can then
+  // refuse an image built for another core.
+  std::string Compiler = "LLVM " LLVM_VERSION_STRING;
+#ifdef LLVM_REVISION
+  Compiler += " " LLVM_REVISION;
+#endif
   return json::Object{
       {"format", "squall-v2-image-2"},
       {"abi", "squall-frame-slots-2"},
+      {"compiler", Compiler},
+      {"isa", json::Object{{"repository", "isacomp"},
+                           {"branch", "squall-v2-rebase"},
+                           {"commit", Squall::IsaCommit}}},
+      // What the hardware must be given besides the memory contents: the
+      // reset values of the two stack pointer registers, and the memory size
+      // the image fills. Every word of memory must be loaded: the frame
+      // arena is not zero (see frame_arena_fill).
+      {"reset",
+       json::Object{{"stack_base", StackBase}, {"stack_top", StackBase - 16}}},
+      // Words [root_frame_word + 1, frame_arena_end_word) all hold this
+      // value, an empty constant slot, so a loader may fill them instead of
+      // transferring them. A hexadecimal string: it exceeds 2^53.
+      {"frame_arena_fill", "0x8000000000000000"},
       {"entry", Entry->getName()},
       {"argument_words", std::move(ArgumentWords)},
       {"argument_types", std::move(ArgumentTypes)},
@@ -1426,7 +1463,7 @@ void SquallAsmPrinter::emitEndOfAsmFile(Module &M) {
     return;
   OutStreamer->switchSection(imageSection());
   FrameBase = std::max(FrameBase, alignTo(CodeStart + CodeWords, 4));
-  // The arena must hold at least one frame's reach (an 11-bit slot field).
+  // The arena must hold at least one frame's reach (MaxSlotWord + 1 words).
   if (FrameBase + Squall::MaxSlotWord + 1 > ArenaEnd) {
     error(Twine("the program's code and globals take ") +
           Twine((CodeStart + CodeWords) * 8 / 1024) +

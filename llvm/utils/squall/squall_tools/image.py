@@ -16,6 +16,9 @@ import tempfile
 
 FORMAT = "squall-v2-image-2"
 ABI = "squall-frame-slots-2"
+# The Isacomp squall-v2-rebase commit the tools are pinned to (see rtl.py);
+# the compiler records the commit it targets in each image's manifest.
+ISA_COMMIT = "a21ccd67752c7b8bd9523818aa77b972f13ddb16"
 
 
 def constant_slot(value):
@@ -73,8 +76,37 @@ def image_symbols(source, nm=None):
     return symbols
 
 
-def load_image(source, directory, arguments=(), *, objcopy=None, nm=None):
+def image_relocations(source, readobj=None, objcopy=None):
+    """Relocations against the image section. There is no Squall linker, so
+    nothing would apply them: the field of an unresolved reference is zero,
+    which as a destination makes an instruction send to itself."""
+    found = readobj or shutil.which("llvm-readobj")
+    if not found and objcopy:
+        beside = Path(objcopy).with_name("llvm-readobj")
+        found = str(beside) if beside.exists() else None
+    if not found:
+        raise RuntimeError("put the built llvm-readobj on PATH: the loader checks the image for relocations")
+    output = subprocess.run([found, "-r", str(source)], capture_output=True, text=True,
+                            check=True, timeout=60).stdout
+    section, result = None, []
+    for line in output.splitlines():
+        if match := re.match(r"\s*Section \(\d+\) (\S+) \{", line):
+            section = match[1]
+        elif section in (".rela.squall.image", ".rel.squall.image") and "R_SQUALL" in line:
+            result.append(line.strip())
+    return result
+
+
+def load_image(source, directory, arguments=(), *, objcopy=None, nm=None, readobj=None,
+               memory_bytes=None):
+    """Extract the image and write the entry arguments. With memory_bytes,
+    the size of the memory the image will be loaded into, refuse an image
+    built for a different size: the frame arena, the token stack and the
+    stack pointers' reset values all depend on it."""
     source, directory = Path(source).resolve(), Path(directory).resolve()
+    if relocations := image_relocations(source, readobj, objcopy):
+        raise ValueError(f"object has {len(relocations)} unresolved reference(s) into the image "
+                         f"(first: {relocations[0]}); Squall objects are not linked")
     with tempfile.TemporaryDirectory(prefix="squall-elf-") as scratch:
         scratch = Path(scratch)
         binary, config = scratch / "memory.bin", scratch / "manifest.json"
@@ -89,6 +121,23 @@ def load_image(source, directory, arguments=(), *, objcopy=None, nm=None):
     if (manifest.get("format") != FORMAT or manifest.get("abi") != ABI
             or len(data) != manifest.get("memory_bytes")):
         raise ValueError("object is not a complete Squall image for this ABI")
+    isa = manifest.get("isa", {}).get("commit")
+    if isa != ISA_COMMIT:
+        raise ValueError(f"image targets Isacomp {isa}; these tools are pinned to {ISA_COMMIT}")
+    if memory_bytes is not None and memory_bytes != manifest["memory_bytes"]:
+        raise ValueError(f"image is built for {manifest['memory_bytes']} bytes of memory, not "
+                         f"{memory_bytes}; recompile with -squall-memory-bytes={memory_bytes}")
+    # The layout the bring-up contract (BRINGUP.md) relies on. A mismatch
+    # means the compiler and this loader disagree, not a bad program.
+    reset = manifest["reset"]
+    start = int.from_bytes(data[reset["stack_base"]:reset["stack_base"] + 8], "little")
+    fill = int(manifest["frame_arena_fill"], 16)
+    arena = range(manifest["root_frame_word"] + 1, manifest["frame_arena_end_word"])
+    if (reset["stack_base"] != len(data) - 16 or reset["stack_top"] != reset["stack_base"] - 16
+            or start & (1 << 29) - 1 != manifest["start_word"]
+            or start >> 32 != manifest["root_frame_word"]
+            or any(data[w * 8:w * 8 + 8] != fill.to_bytes(8, "little") for w in arena)):
+        raise ValueError("image layout does not match its manifest")
     arguments = list(arguments)
     kinds = manifest["argument_types"]
     if len(arguments) != len(kinds):
@@ -123,9 +172,13 @@ def main(argv=None):
                         help="entry argument, repeated in order")
     parser.add_argument("--objcopy")
     parser.add_argument("--nm")
+    parser.add_argument("--readobj")
+    parser.add_argument("--memory-bytes", type=lambda v: int(v, 0),
+                        help="size of the target's memory; refuse an image built for another size")
     args = parser.parse_args(argv)
     try:
-        load_image(args.input, args.output, args.arg, objcopy=args.objcopy, nm=args.nm)
+        load_image(args.input, args.output, args.arg, objcopy=args.objcopy, nm=args.nm,
+                   readobj=args.readobj, memory_bytes=args.memory_bytes)
     except (OSError, RuntimeError, ValueError, KeyError, subprocess.SubprocessError) as exc:
         parser.exit(1, f"squall-image: {exc}\n")
     return 0

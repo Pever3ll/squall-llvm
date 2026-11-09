@@ -11,10 +11,11 @@ import shutil
 import subprocess
 import sys
 
+from .image import ISA_COMMIT
 from .reference import checked, run_image
 
 # Isacomp squall-v2-rebase. Production needs vendor/cva6 (its mul/div unit).
-ISACOMP_COMMIT = "a21ccd67752c7b8bd9523818aa77b972f13ddb16"
+ISACOMP_COMMIT = ISA_COMMIT
 CVA6_COMMIT = "81245a47fad8fe1a5d562d953ef2662e099def76"
 VARIANTS = ("baseline", "pipeline", "production")
 
@@ -137,6 +138,9 @@ def run_rtl(directory, *, isacomp=None, cache=None, reference=None,
     manifest = json.loads((directory / "manifest.json").read_text())
     # The pinned baseline TB dumps 65536 64-bit words. Larger images require a
     # different harness; reject rather than silently comparing partial memory.
+    if manifest.get("isa", {}).get("commit") != ISACOMP_COMMIT:
+        raise RuntimeError(f"image targets Isacomp {manifest.get('isa', {}).get('commit')}, "
+                           f"not the pinned {ISACOMP_COMMIT}")
     if manifest["memory_bytes"] > 512 * 1024:
         raise RuntimeError("baseline RTL harness supports images up to 512 KiB")
     expected = run_image(directory, reference=reference, trace=True)

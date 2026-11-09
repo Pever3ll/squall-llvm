@@ -120,7 +120,12 @@ def main(argv=None):
         result = run_image(args.image, reference=args.reference_dir, trace=args.trace)
         print(json.dumps(result, sort_keys=True))
         if not result["quiescent"] or result["status"] != 1:
-            print("Squall execution did not complete successfully", file=sys.stderr)
+            reason = {0: "no status was written: the last token was discarded (a send to word 0, "
+                         "padding, or a store that parked on an empty word)",
+                      2: "call depth exceeded the frame arena", 3: "invalid memory address",
+                      4: "trap (abort, failed assert, or a null function pointer)"}
+            why = reason.get(result["status"], "") if result["quiescent"] else "tokens remain after max_cycles"
+            print(f"Squall execution did not complete successfully: {why}", file=sys.stderr)
             return 1
         if args.expect is not None and result["result"] != args.expect:
             print(f"expected {args.expect}, got {result['result']}", file=sys.stderr)

@@ -45,7 +45,14 @@
 ; CHECK-SAME: \"argument_extensions\":[\"none\",\"none\"]
 ; CHECK-SAME: \"argument_types\":[\"i32\",\"i32\"]
 ; CHECK-SAME: \"argument_words\":[8,9]
+; CHECK-SAME: \"compiler\":\"LLVM {{[0-9.]+}}
+; CHECK-SAME: \"frame_arena_end_word\":63486
+; CHECK-SAME: \"frame_arena_fill\":\"0x8000000000000000\"
 ; CHECK-SAME: \"globals\":{\"g\":16}
+; The Isacomp commit whose RTL the encoding is that of, and the reset values
+; of the core's stack pointer registers.
+; CHECK-SAME: \"isa\":{\"branch\":\"squall-v2-rebase\",\"commit\":\"a21ccd67752c7b8bd9523818aa77b972f13ddb16\",\"repository\":\"isacomp\"}
+; CHECK-SAME: \"reset\":{\"stack_base\":524272,\"stack_top\":524256}
 
 ; OBJ:      Format: elf32-squall
 ; OBJ:      Name: .squall.image

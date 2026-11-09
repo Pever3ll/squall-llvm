@@ -56,7 +56,7 @@ python3 llvm/utils/squall/build.py --build-dir ../build --llvm-only --static-too
 ```sh
 clang --target=squallv2 -O2 -c -mllvm -squall-entry=kernel examples/kernel.c -o kernel.o
 python3 -m pip install -e 'llvm/utils/squall[test]'
-squall-image kernel.o -o out/kernel --arg 7     # loader: write the arguments
+squall-image kernel.o -o out/kernel --arg 7     # loader: check the image, write the arguments
 squall-run out/kernel --expect 45                # pinned Zig reference interpreter
 squall-rtl out/kernel --variant production       # generated Isacomp RTL
 ```
@@ -174,8 +174,10 @@ zero-extended. Frame objects, and globals below word 2048, start on cell
 boundaries and are read and written as static slots. Other pointers go through
 an inline helper: the caller sends a token whose FP is the target word, and the
 helper accesses frame slot 0 there and returns through a saved continuation
-tag. The pointer is checked for alignment, the reserved low words, and the
-memory bound first (status 3).
+tag. The pointer is checked first (status 3): it must be aligned, not below
+the globals, and below the end of the frame arena, so the token stack above
+the arena cannot be read or overwritten. Stores into the code or into another
+frame are not detected.
 
 Narrower accesses are built from cell accesses. A `char` or `short` load loads
 its cell and extracts the bytes during instruction selection. A store that
@@ -210,10 +212,12 @@ saves the pointer on entry and restores it before returning;
 `llvm.stacksave`/`stackrestore` read and write it. Exhausting the area traps.
 
 **Function pointers.** A token tag packs the instruction word (bits 0-28), the
-frame pointer (bits 29-57), and the port (bit 58). A function pointer is the
+frame pointer (bits 32-60), and the port (bit 61). A function pointer is the
 entry's word address, a tag with frame pointer 0: taking an address mints a tag
 for the entry and keeps its instruction field, and an indirect call ORs in the
-callee's frame pointer and sends. Initializers hold function addresses as
+callee's frame pointer and sends. A null pointer would be a send to word 0,
+the discard destination, so an indirect call tests for it first and traps
+(status 4). Initializers hold function addresses as
 layout-time expressions, `(entry - halt) / 8`.
 
 **Parallel lanes (`-squall-fork-join`).** Expanded code normally runs with one
@@ -287,8 +291,13 @@ by default.
 | 1/4 of memory, or after the code | Frame arena, initialized to constant zero slots |
 | top | Token stack, holding the start token |
 
-`.squall.config` holds a JSON description of this layout. All references
-resolve inside the section, so objects carry no relocations.
+`.squall.config` holds a JSON description of this layout, the compiler
+version, and the Isacomp commit the image targets (`isa.commit`); the tools
+refuse an image for another commit. All references resolve inside the
+section, so objects carry no relocations, and the loader refuses one that
+does. [BRINGUP.md](BRINGUP.md) is the contract between an image and the
+hardware: what to load, the reset values, how to detect completion, the cache
+flush, and the status codes.
 
 ## Assembly syntax
 
@@ -319,9 +328,12 @@ data:    .slot 42
 | `halt` | Word 0, the discard destination, unless the file defines `halt` |
 
 Instruction fields use 64-bit word units. Out-of-range fields, bad suffixes,
-and misaligned or out-of-range label references are errors. Alignment padding
-(`.p2align`) is zero words, which are not executable: a word forwards a token
-on one fixed port, so no padding could pass every token on unchanged. Name the
+and misaligned or out-of-range label references are errors. A reference to a
+label the file does not define assembles to a relocation with a zero field;
+nothing links Squall objects, so define every label. Alignment padding
+(`.p2align`) is not executable: a word forwards a token on one fixed port, so
+no padding could pass every token on unchanged. Each padding word is `write 0
+0x00`, which discards a token that reaches it. Name the
 instruction after padding by a label, not by a relative offset or a secondary
 destination; generated code jumps over padding. `examples/assembly_add.sqa`
 is a small handwritten program. `llvm-mc` output contains only the assembled
@@ -385,3 +397,8 @@ out for the production core.
   stay within a basic block, and recursive or indirect calls end a region.
 * Byte stores are read-modify-write updates of their cell, so they cost a
   cell load as well as the store.
+* A function's frame is limited to about 2000 words (8 KiB of locals), and
+  only globals below word 2048 are accessed as static slots; the 12-bit slot
+  field would allow twice both.
+* There is no output but the result and status words and the final contents
+  of memory; see "Seeing more than one word" in [BRINGUP.md](BRINGUP.md).

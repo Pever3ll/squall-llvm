@@ -109,12 +109,19 @@ def test_dotted_labels_keep_components_that_are_not_ports(tmp_path):
     assert (words[1] >> 43) & 0xfffff == 0 and (words[1] >> 8) & 3 == 0b11
 
 
-def test_alignment_padding_is_inert(tmp_path):
+def test_alignment_padding_discards_a_token(tmp_path):
     # No padding word could pass on a token arriving on either port with its
-    # value and port intact, so padding never forwards one: a token reaching
-    # it stops there instead of continuing changed.
-    _, words = text_section(tmp_path, "start: dupr (1).r #123\n.p2align 6\nnext: sub.c (2).l [0]\n")
-    assert words[1:8] == [0] * 7, [hex(w) for w in words]
+    # value and port intact, so padding never forwards one. A token reaching
+    # it is discarded: each word is `write 0 0x00`, which stores no byte and
+    # forms no token. (A zero word would be `nop (0).l #0`, which sends the
+    # token to itself forever.)
+    obj, words = text_section(tmp_path, "start: dupr (1).r #123\n.p2align 6\nnext: sub.c (2).l [0]\n")
+    assert words[1:8] == [2] * 7, [hex(w) for w in words]
+    for word in words[1:8]:
+        assert word & 3 == 2            # Write form,
+        assert (word >> 31) & 0xff == 0  # no byte enabled,
+        assert (word >> 39) & 1 == 0     # no acknowledgement token.
+    assert run_tool("llvm-objdump", "-d", obj).stdout.count("write 0 0x00") == 7
 
 
 def test_forward_and_backward_labels_resolve_without_relocations(tmp_path):

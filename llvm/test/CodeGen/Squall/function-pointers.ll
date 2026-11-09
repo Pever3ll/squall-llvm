@@ -39,6 +39,13 @@ define ptr @address() {
 ; MIR-LABEL: name: main
 ; MIR: CALLIR killed %{{[0-9]+}}, %{{[0-9]+}}
 ; CHECK-LABEL: main:
+; The table load's pointer is bounded by the end of the frame arena (word
+; 63486), so it cannot reach the token stack.
+; CHECK:      sub (2).l.r #253944
+; A null pointer would send to word 0, the discard destination: trap.
+; (beqz continues two words on when the pointer is nonzero.)
+; CHECK:      dupl __squall_trap.l #0
+; CHECK-NEXT: extract (1).l __squall_halt.l
 ; CHECK:      add (1).l #{{[0-9]+}}
 ; CHECK-NEXT: shl (1).l #32
 ; CHECK-NEXT: or.r (1).l [{{[0-9]+}}]
