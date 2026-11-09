@@ -1,5 +1,11 @@
 # Validation
 
+> **Superseded contract.** The results below were measured for image format
+> `squall-v2-image-1` / ABI `squall-frame-slots-1`, on Isacomp
+> `squall-v2-hpdcache` (`899ee445`). The backend now targets
+> `squall-v2-rebase` (`a21ccd67`); see the README's hardware contract. These
+> numbers have not been re-measured for it.
+
 Results for the backend as committed, measured on macOS (arm64) on 2026-10-24
 with the default build (`build.py --check`, Squall as the only target, Clang
 enabled, assertions on).

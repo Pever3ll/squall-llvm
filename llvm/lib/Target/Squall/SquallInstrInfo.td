@@ -44,10 +44,14 @@ def ALUS : SQ<(ins SQImm:$alu, SQImm:$dest, SQImm:$port, SQImm:$second,
                    SQImm:$slot, SQImm:$mode, SQImm:$rule)>;
 def SEND : SQ<(ins SQImm:$dest, SQImm:$port, SQImm:$slot, SQImm:$mode,
                    SQImm:$rule)>;
+// Extract is monadic: it mints a tag for $target in the token's frame and
+// matches no slot.
 def EXTRACT : SQ<(ins SQImm:$dest, SQImm:$port, SQImm:$target,
-                      SQImm:$targetport, SQImm:$slot, SQImm:$mode,
-                      SQImm:$rule)>;
-def WRITE : SQ<(ins SQImm:$address)>;
+                      SQImm:$targetport)>;
+// $mask selects the bytes stored; with $ack set, the stored value is also
+// sent on to $dest.
+def WRITE : SQ<(ins SQImm:$address, SQImm:$mask, SQImm:$dest, SQImm:$port,
+                    SQImm:$ack)>;
 
 //===----------------------------------------------------------------------===//
 // Target DAG nodes

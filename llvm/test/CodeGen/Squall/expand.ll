@@ -4,13 +4,13 @@
 ; at the next word. Registers are frame words: s0 is [3], s1 is [4].
 
 ; A register operand is read directly from its slot; 32-bit results are
-; sign-extended in the 64-bit token. Reading back the stored result is
+; zero-extended in the 64-bit token, since a slot read zero-extends. Reading back the stored result is
 ; unnecessary because the store's token still carries it.
 ; CHECK-LABEL: add:
 ; CHECK:      dupr.r (1).l [3]
 ; CHECK-NEXT: add.r (1).l [4]
 ; CHECK-NEXT: shl (1).l #32
-; CHECK-NEXT: shra (1).r #32
+; CHECK-NEXT: shrl (1).r #32
 ; CHECK-NEXT: dupr.c (1).r [3]
 ; CHECK-NEXT: send.r __squall_halt.l [0]
 define i32 @add(i32 %a, i32 %b) {
@@ -44,8 +44,8 @@ other:
 ; as the callee's return tag, and sends a token with the frame pointer
 ; advanced by its frame size.
 ; CHECK-LABEL: caller:
-; CHECK:      extract.r (1).l __squall_halt.l [0]
-; CHECK-NEXT: shrl (1).l #29
+; CHECK:      extract (1).l __squall_halt.l
+; CHECK-NEXT: shrl (1).l #32
 ; CHECK-NEXT: sub (2).l.r #61431
 ; CHECK-NEXT: dupr.c __squall_halt.l [1]
 ; CHECK-NEXT: dupr.r (1).l [1]
@@ -55,12 +55,12 @@ other:
 ; CHECK-NEXT: dupr.c (1).l [11]
 ; CHECK-NEXT: dupr.r (1).r [4]
 ; CHECK-NEXT: dupr.c (1).l [12]
-; CHECK-NEXT: extract.r (1).r (6).r [0]
+; CHECK-NEXT: extract (1).r (6).r
 ; CHECK-NEXT: dupr.c (1).l [8]
-; CHECK-NEXT: extract.r (1).l .Lsquall_entry{{[0-9]+}}.l [0]
+; CHECK-NEXT: extract (1).l .Lsquall_entry{{[0-9]+}}.l
 ; CHECK-NEXT: add.r (1).l (2)
 ; CHECK-NEXT: send.r __squall_halt.l [0]
-; CHECK-NEXT: .quad -9223372032559808512
+; CHECK-NEXT: .quad -9223372002495037440
 ; CHECK-NEXT: dupr.c (1).r [3]
 ; CHECK-NEXT: send.r __squall_halt.l [0]
 define i32 @caller(i32 %a) {

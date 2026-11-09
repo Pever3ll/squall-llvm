@@ -29,7 +29,7 @@ define i32 @dec(i32 %x) {
 ; MIR-LABEL: name: address
 ; MIR: MOVG @dec
 ; CHECK-LABEL: address:
-; CHECK:      extract.r (1).l [[DEC]].l [0]
+; CHECK:      extract (1).l [[DEC]].l
 ; CHECK-NEXT: and (1).{{[lr]}} #536870911
 define ptr @address() {
   ret ptr @dec
@@ -40,7 +40,7 @@ define ptr @address() {
 ; MIR: CALLIR killed %{{[0-9]+}}, %{{[0-9]+}}
 ; CHECK-LABEL: main:
 ; CHECK:      add (1).l #{{[0-9]+}}
-; CHECK-NEXT: shl (1).l #29
+; CHECK-NEXT: shl (1).l #32
 ; CHECK-NEXT: or.r (1).l [{{[0-9]+}}]
 ; CHECK-NEXT: send.r __squall_halt.l [0]
 define i32 @main(i32 %i, i32 %x) {

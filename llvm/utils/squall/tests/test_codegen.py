@@ -444,8 +444,8 @@ def test_canonicalize_quiets_signaling_nans(tmp_path, kind, value, expected, opt
 
 
 def test_high_bit_pointer_arguments(tmp_path):
-    # Registers hold pointers sign-extended like integers, so a loaded
-    # pointer equals the same constant in code.
+    # Registers hold pointers zero-extended like integers, so a loaded
+    # pointer equals the same (negative-literal) constant in code.
     execute(tmp_path, """define i32 @main(ptr %p) {
       %eq = icmp eq ptr %p, inttoptr (i32 -2147483648 to ptr)
       %r = zext i1 %eq to i32

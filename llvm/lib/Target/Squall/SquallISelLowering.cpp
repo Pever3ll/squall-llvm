@@ -7,11 +7,12 @@
 //===----------------------------------------------------------------------===//
 //
 // Values are i32; wider integers are legalized into i32 pieces. Booleans are
-// 0/1 in an i32 register. Squall's arithmetic is 64-bit, so the AsmPrinter
-// keeps every register sign-extended from 32 bits.
+// 0/1 in an i32 register. Squall's arithmetic is 64-bit and a slot read
+// zero-extends its 62-bit payload, so the AsmPrinter keeps every register
+// zero-extended from 32 bits.
 //
 // Memory is byte-addressed in four-byte little-endian cells, one per 64-bit
-// slot. A cell holds its 32-bit value sign-extended, so i32 and pointer
+// slot. A cell holds its 32-bit value zero-extended, so i32 and pointer
 // accesses are single slot accesses. Narrower accesses load the cell and
 // extract the bytes; narrower stores rewrite the cell. Expanded code runs with
 // one control token, so the read-modify-write cannot race.

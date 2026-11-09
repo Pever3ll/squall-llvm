@@ -14,14 +14,16 @@ import shutil
 import subprocess
 import tempfile
 
-ABI = "squall-frame-slots-1"
+FORMAT = "squall-v2-image-2"
+ABI = "squall-frame-slots-2"
 
 
 def constant_slot(value):
-    """A matching slot holding a constant: presence bits 0b10, 62-bit payload."""
-    if not -(1 << 61) <= value < 1 << 61:
-        raise ValueError(f"slot payload {value} does not fit 62 bits")
-    return 2 << 62 | (value & ((1 << 62) - 1))
+    """A matching slot holding a constant: presence bits 0b10 and a 62-bit
+    payload, which a slot read zero-extends."""
+    if not 0 <= value < 1 << 62:
+        raise ValueError(f"slot payload {value} does not fit unsigned 62 bits")
+    return 2 << 62 | value
 
 
 def canonical(value, kind, extension="none"):
@@ -42,11 +44,9 @@ def canonical(value, kind, extension="none"):
     value &= (1 << bits) - 1
     if extension == "sext" and value >= 1 << bits - 1:
         value -= 1 << bits
-    # Registers hold 32-bit values sign-extended to the 64-bit slot, pointers
-    # as well as integers, so a high-bit pointer compares equal to the same
-    # constant in code.
-    value &= 0xffffffff
-    return value - (1 << 32) if value >= 1 << 31 else value
+    # Registers hold 32-bit values zero-extended to the 64-bit slot, pointers
+    # as well as integers: a slot read zero-extends.
+    return value & 0xffffffff
 
 
 def tool(name, explicit=None):
@@ -86,7 +86,7 @@ def load_image(source, directory, arguments=(), *, objcopy=None, nm=None):
             raise RuntimeError(f"cannot read Squall object: {result.stderr.strip()}")
         manifest = json.loads(config.read_text())
         data = bytearray(binary.read_bytes())
-    if (manifest.get("format") != "squall-v2-image-1" or manifest.get("abi") != ABI
+    if (manifest.get("format") != FORMAT or manifest.get("abi") != ABI
             or len(data) != manifest.get("memory_bytes")):
         raise ValueError("object is not a complete Squall image for this ABI")
     arguments = list(arguments)

@@ -92,6 +92,10 @@ enum AluOp : int {
   Beqz = 32, // Primary result if the token is nonzero, else the secondary.
   Beql = 33, // Primary result if the operands differ, else the secondary.
 };
+// Squall v2 field layout, as implemented by Isacomp squall-v2-rebase.
+constexpr unsigned TagFPShift = 32; // Tag: ip 28:0, fp 60:32, port 61.
+constexpr int64_t TagIPMask = (INT64_C(1) << 29) - 1;
+constexpr unsigned FullWordMask = 0xff; // Write byte enables.
 enum SlotMode : unsigned { FrameSlot = 0, CodeSlot = 1, AbsoluteSlot = 2 };
 enum MatchRule : unsigned { Once = 0, Const = 1, Read = 2 };
 enum Port : unsigned { Left = 0, Right = 1 };
@@ -102,15 +106,19 @@ constexpr unsigned ResultWord = 1, StatusWord = 2, FirstMailbox = 3,
 constexpr int64_t StatusSuccess = 1, StatusDepth = 2, StatusMemory = 3,
                   StatusTrap = 4;
 // A token tag packs the instruction word address in bits 0-28, the frame
-// pointer word in bits 29-57, and the entry port in bit 58.
-constexpr unsigned TagFPShift = 29;
-constexpr int64_t TagIPMask = (INT64_C(1) << TagFPShift) - 1;
+// pointer word in bits 32-60, and the entry port in bit 61, so a tag fits the
+// 62-bit payload of a slot.
+//
+// A slot read zero-extends that payload, so a value round-trips through a
+// slot only if it is a nonnegative number below 2^62. Registers therefore
+// hold their 32-bit values zero-extended, and signed operations extend their
+// operands in the token, never in a slot.
 
 /// A matching-slot word holding a persistent constant: presence bits 0b10
-/// and a sign-extended 62-bit payload.
-uint64_t constantSlot(int64_t Value) {
-  assert(isInt<62>(Value) && "slot payload out of range");
-  return UINT64_C(2) << 62 | (uint64_t(Value) & ((UINT64_C(1) << 62) - 1));
+/// and a 62-bit payload, read back zero-extended.
+uint64_t constantSlot(uint64_t Value) {
+  assert(isUInt<62>(Value) && "slot payload out of range");
+  return UINT64_C(2) << 62 | Value;
 }
 
 /// A successor destination.
@@ -301,13 +309,23 @@ public:
     W.Imm = Address;
     return add(W);
   }
+  /// The token's low 32 bits, sign-extended to 64. The result may be
+  /// negative, so it must not be stored in a slot.
   void signExtend32() {
     imm(Shl, 32);
     imm(Shra, 32);
   }
+  /// The token's low 32 bits, zero-extended: the register representation.
   void zeroExtend32() {
     imm(Shl, 32);
     imm(Shrl, 32);
+  }
+  /// The negation of the token: 0 - token, entered on the right so that the
+  /// literal is the left operand.
+  int negate() {
+    int I = imm(Sub, 0);
+    Words[I].Entry = Right;
+    return I;
   }
   /// Leave the secondary result (a borrow, for Sub) in the scratch word: the
   /// secondary token is consumed first and captured, then the primary token
@@ -344,6 +362,10 @@ public:
       auto imm = [&](int64_t V) { Inst.addOperand(MCOperand::createImm(V)); };
       if (W.Opcode == Squall::WRITE) {
         imm(W.Imm);
+        imm(FullWordMask);
+        imm(0); // No acknowledgement.
+        imm(0);
+        imm(0);
         Out.emitInstruction(Inst, STI);
         continue;
       }
@@ -361,9 +383,9 @@ public:
       }
       if (W.Opcode == Squall::ALUI) {
         imm(W.Imm);
+      } else if (W.Opcode == Squall::EXTRACT) {
+        destination(Inst, I, W.Target, Ctx); // Monadic: no slot.
       } else {
-        if (W.Opcode == Squall::EXTRACT)
-          destination(Inst, I, W.Target, Ctx);
         imm(W.Mode == CodeSlot ? W.CodeData - I : W.Slot);
         imm(W.Mode);
         imm(W.Rule);
@@ -469,8 +491,9 @@ private:
                  MutableArrayRef<uint8_t> Bytes, uint64_t Offset);
   /// Emit a global's initializer as constant slots, four bytes per cell.
   void emitCells(const Constant *C, const DataLayout &DL);
-  void expandBinary(Chain &C, const MachineInstr &MI, int Alu, bool Unsigned,
-                    bool Normalize);
+  void expandBinary(Chain &C, const MachineInstr &MI, int Alu, bool Normalize);
+  void expandSigned(Chain &C, const MachineInstr &MI, int Alu);
+  void expandShiftRightArith(Chain &C, const MachineInstr &MI);
   void expandCompare(Chain &C, const MachineInstr &MI);
   void expandMemory(Chain &C, const MachineInstr &MI, bool IsStore,
                     std::optional<unsigned> PointerReg, int64_t Pointer);
@@ -555,7 +578,7 @@ void SquallAsmPrinter::emitCells(const Constant *C, const DataLayout &DL) {
                         [&](const auto &Cell) { return Cell.first == I / 4; });
     if (Code == FunctionCells.end()) {
       OutStreamer->emitIntValue(
-          constantSlot(int32_t(support::endian::read32le(&Bytes[I]))), 8);
+          constantSlot(support::endian::read32le(&Bytes[I])), 8);
       continue;
     }
     // A constant slot holding the entry's word address.
@@ -717,29 +740,100 @@ void SquallAsmPrinter::emitImageHeader(Module &M) {
   CodeWords += Runtime.size();
 }
 
+// Registers hold 32-bit values zero-extended to the 64-bit token width (a
+// slot read zero-extends). An operation whose low 32 bits are right but whose
+// upper bits may not be zero is normalized before the result is stored.
 void SquallAsmPrinter::expandBinary(Chain &C, const MachineInstr &MI, int Alu,
-                                    bool Unsigned, bool Normalize) {
+                                    bool Normalize) {
   unsigned D = word(MI.getOperand(0)), A = word(MI.getOperand(1));
   const MachineOperand &B = MI.getOperand(2);
+  C.read(A);
   if (B.isImm()) {
-    C.read(A);
-    if (Unsigned)
-      C.zeroExtend32();
     C.imm(Alu, B.getImm());
-  } else if (Unsigned) {
-    C.read(word(B));
-    C.zeroExtend32();
-    C.store(C.scratch());
-    C.read(A);
-    C.zeroExtend32();
-    C.slotOp(Alu, FrameSlot, C.scratch());
+    // A negative literal is sign-extended to 64 bits.
+    Normalize |= (Alu == Or || Alu == Xor) && B.getImm() < 0;
   } else {
-    C.read(A);
     C.slotOp(Alu, FrameSlot, word(B));
   }
-  // Registers hold 32-bit values sign-extended to the 64-bit token width.
   if (Normalize)
+    C.zeroExtend32();
+  C.store(D);
+}
+
+// Signed division, remainder and high product. Both operands must be
+// sign-extended to 64 bits, but a negative value cannot sit in a slot, so the
+// slot operand is the divisor's magnitude and the token carries the dividend,
+// negated when the divisor is negative:
+//   a / b == (-a) / |b|,  a % b == a % |b|,  a * b == (-a) * |b|  for b < 0.
+// All of these are exact in 64 bits for 32-bit operands.
+void SquallAsmPrinter::expandSigned(Chain &C, const MachineInstr &MI,
+                                    int Alu) {
+  unsigned D = word(MI.getOperand(0)), A = word(MI.getOperand(1));
+  const MachineOperand &B = MI.getOperand(2);
+  auto Finish = [&] {
+    if (Alu == Mul)
+      C.imm(Shrl, 32); // The high half, zero-extended.
+    else
+      C.zeroExtend32();
+    C.store(D);
+  };
+  if (B.isImm()) {
+    assert(Alu != Mul && "no high-product immediate form");
+    C.read(A);
     C.signExtend32();
+    C.imm(Alu, B.getImm()); // The literal is already sign-extended.
+    Finish();
+    return;
+  }
+  unsigned Divisor = word(B), Magnitude = C.scratch();
+  bool NegateDividend = Alu != Rem;
+  // Branch on the divisor's sign.
+  C.read(Divisor);
+  C.imm(Shl, 32);
+  C.imm(Shra, 63);
+  int Test = C.imm(Beqz, 0);
+  C[Test].Secondary = true; // Nonnegative: fall into the next word.
+  // b >= 0: |b| is b.
+  C.read(Divisor);
+  C.store(Magnitude);
+  C.read(A);
+  C.signExtend32();
+  int PosOp = C.slotOp(Alu, FrameSlot, Magnitude);
+  // b < 0: reached only from the test.
+  int NegStart = C.read(Divisor);
+  C.negate();
+  C.zeroExtend32(); // |b|; 2^31 for INT32_MIN.
+  C.store(Magnitude);
+  C.read(A);
+  C.signExtend32();
+  if (NegateDividend)
+    C.negate();
+  int NegOp = C.slotOp(Alu, FrameSlot, Magnitude);
+  for (int I = NegStart; I <= NegOp; ++I) {
+    C[I].Detached = true;
+    if (I < NegOp)
+      C[I].D = Dest::item(I + 1);
+  }
+  C[Test].D = Dest::item(NegStart);
+  int Join = C.size();
+  Finish();
+  C[PosOp].D = Dest::item(Join);
+  C[NegOp].D = Dest::item(Join);
+}
+
+// An arithmetic shift of the value moved to the top of the token: the top 32
+// bits are the 32-bit result, which a logical shift brings back down.
+void SquallAsmPrinter::expandShiftRightArith(Chain &C,
+                                             const MachineInstr &MI) {
+  unsigned D = word(MI.getOperand(0)), A = word(MI.getOperand(1));
+  const MachineOperand &B = MI.getOperand(2);
+  C.read(A);
+  C.imm(Shl, 32);
+  if (B.isImm())
+    C.imm(Shra, B.getImm());
+  else
+    C.slotOp(Shra, FrameSlot, word(B));
+  C.imm(Shrl, 32);
   C.store(D);
 }
 
@@ -764,7 +858,10 @@ void SquallAsmPrinter::expandCompare(Chain &C, const MachineInstr &MI) {
     return;
   }
   // a < b is the borrow of a - b, computed on values whose order as 64-bit
-  // unsigned numbers matches the requested comparison.
+  // unsigned numbers matches the requested comparison. Registers are
+  // zero-extended, which orders them as unsigned; a signed comparison first
+  // maps each value to value + 2^31 (flipping bit 31), kept zero-extended so
+  // that it can be stored.
   bool Swap = CC == Squall::GT || CC == Squall::LE || CC == Squall::UGT ||
               CC == Squall::ULE;
   bool Invert = CC == Squall::LE || CC == Squall::GE || CC == Squall::ULE ||
@@ -774,15 +871,19 @@ void SquallAsmPrinter::expandCompare(Chain &C, const MachineInstr &MI) {
   if (Swap)
     std::swap(A, B);
   unsigned Right = B;
+  auto Bias = [&] {
+    C.imm(Xor, INT32_MIN);
+    C.zeroExtend32();
+  };
   if (Signed) {
     C.read(B);
-    C.imm(Xor, INT32_MIN);
+    Bias();
     C.store(C.scratch());
     Right = C.scratch();
   }
   C.read(A);
   if (Signed)
-    C.imm(Xor, INT32_MIN);
+    Bias();
   C.captureSecondary(C.slotOp(Sub, FrameSlot, Right));
   if (Invert)
     C.imm(Xor, 1);
@@ -841,7 +942,8 @@ void SquallAsmPrinter::expandMemory(Chain &C, const MachineInstr &MI,
   C[Stub].Detached = true;
 
   C.readAbs(PointerBox);
-  C.imm(Shl, 27); // Logical byte address << 27 == word << 29, the FP field.
+  // Logical byte address << 30 == word << 32, the FP field.
+  C.imm(Shl, TagFPShift - 2);
   C.slotOp(Or, AbsoluteSlot, HelperBox);
   C.send(AbsoluteSlot, ValueBox, Left);
 
@@ -888,7 +990,7 @@ void SquallAsmPrinter::expandCall(Chain &C, const MachineInstr &MI) {
   // word below its FP + 2048 with an 11-bit frame slot.
   int64_t Limit = int64_t(ArenaEnd) - (FrameWords + Squall::MaxSlotWord);
   C.extract(Dest::symbol(Halt));
-  C.imm(Shrl, 29); // The frame pointer of the current token.
+  C.imm(Shrl, TagFPShift); // The frame pointer of the current token.
   C.captureSecondary(C.imm(Sub, Limit));
   C.branch(Dest());
   int Stub = C.jump(Dest::symbol(DepthError));
@@ -995,6 +1097,8 @@ Chain SquallAsmPrinter::expand(const MachineInstr &Instr, unsigned Scratch) {
     break;
   case Squall::MOVi:
     C.imm(Dupr, Op(1).getImm());
+    if (Op(1).getImm() < 0)
+      C.zeroExtend32(); // The literal is sign-extended to 64 bits.
     C.store(word(Op(0)));
     break;
   case Squall::MOVG:
@@ -1018,79 +1122,74 @@ Chain SquallAsmPrinter::expand(const MachineInstr &Instr, unsigned Scratch) {
     break;
   case Squall::FIADDR:
     C.extract(Dest::symbol(Halt));
-    C.imm(Shrl, 29);
+    C.imm(Shrl, TagFPShift);
     C.imm(Add, Op(1).getImm());
     C.imm(Shl, 2);
     C.store(word(Op(0)));
     break;
   case Squall::ADDrr:
   case Squall::ADDri:
-    expandBinary(C, *MI, Add, false, true);
+    expandBinary(C, *MI, Add, true);
     break;
   case Squall::SUBrr:
   case Squall::SUBri:
-    expandBinary(C, *MI, Sub, false, true);
+    expandBinary(C, *MI, Sub, true);
     break;
   case Squall::MULrr:
   case Squall::MULri:
-    expandBinary(C, *MI, Mul, false, true);
+    expandBinary(C, *MI, Mul, true);
     break;
   case Squall::SDIVrr:
   case Squall::SDIVri:
-    expandBinary(C, *MI, Div, false, true);
+    expandSigned(C, *MI, Div);
     break;
   case Squall::SREMrr:
   case Squall::SREMri:
-    expandBinary(C, *MI, Rem, false, true);
+    expandSigned(C, *MI, Rem);
     break;
+  // Zero-extended operands are nonnegative, so a signed remainder of them is
+  // the unsigned one.
   case Squall::UDIVrr:
   case Squall::UDIVri:
-    expandBinary(C, *MI, Divu, true, true);
+    expandBinary(C, *MI, Divu, false);
     break;
   case Squall::UREMrr:
   case Squall::UREMri:
-    expandBinary(C, *MI, Rem, true, true);
+    expandBinary(C, *MI, Rem, false);
     break;
   case Squall::ANDrr:
   case Squall::ANDri:
-    expandBinary(C, *MI, And, false, false);
+    expandBinary(C, *MI, And, false);
     break;
   case Squall::ORrr:
   case Squall::ORri:
-    expandBinary(C, *MI, Or, false, false);
+    expandBinary(C, *MI, Or, false);
     break;
   case Squall::XORrr:
   case Squall::XORri:
-    expandBinary(C, *MI, Xor, false, false);
+    expandBinary(C, *MI, Xor, false);
     break;
   case Squall::MULHS:
-    C.read(word(Op(1)));
-    C.slotOp(Mul, FrameSlot, word(Op(2)));
-    C.imm(Shra, 32); // The exact product of two 32-bit values fits 64 bits.
-    C.store(word(Op(0)));
+    expandSigned(C, *MI, Mul);
     break;
   case Squall::MULHU:
-    C.read(word(Op(2)));
-    C.zeroExtend32();
-    C.store(C.scratch());
+    // The exact 64-bit product of two zero-extended values.
     C.read(word(Op(1)));
-    C.zeroExtend32();
-    C.slotOp(Mul, FrameSlot, C.scratch());
+    C.slotOp(Mul, FrameSlot, word(Op(2)));
     C.imm(Shrl, 32);
-    C.signExtend32();
     C.store(word(Op(0)));
     break;
   case Squall::SHLrr:
   case Squall::SHLri:
-    expandBinary(C, *MI, Shl, false, true);
+    expandBinary(C, *MI, Shl, true);
     break;
   case Squall::SRArr:
   case Squall::SRAri:
-    expandBinary(C, *MI, Shra, false, false);
+    expandShiftRightArith(C, *MI);
     break;
   case Squall::SRLrr:
   case Squall::SRLri:
-    expandBinary(C, *MI, Shrl, true, true);
+    expandBinary(C, *MI, Shrl, false);
     break;
   case Squall::SETCC:
     expandCompare(C, *MI);
@@ -1274,8 +1373,8 @@ json::Object SquallAsmPrinter::manifest(const Module &M) const {
     if (auto It = GlobalWords.find(&G); It != GlobalWords.end())
       Globals[G.getName()] = It->second;
   return json::Object{
-      {"format", "squall-v2-image-1"},
-      {"abi", "squall-frame-slots-1"},
+      {"format", "squall-v2-image-2"},
+      {"abi", "squall-frame-slots-2"},
       {"entry", Entry->getName()},
       {"argument_words", std::move(ArgumentWords)},
       {"argument_types", std::move(ArgumentTypes)},
@@ -1358,7 +1457,7 @@ void SquallAsmPrinter::emitEndOfAsmFile(Module &M) {
   // frame pointer, port) and its value.
   OutStreamer->emitValueToOffset(MCConstantExpr::create(StackBase, OutContext),
                                  0, SMLoc());
-  OutStreamer->emitIntValue((StartWord | FrameBase << 29) << 2, 8);
+  OutStreamer->emitIntValue(StartWord | FrameBase << TagFPShift, 8);
   OutStreamer->emitIntValue(0, 8);
 
   MCSection *Config =

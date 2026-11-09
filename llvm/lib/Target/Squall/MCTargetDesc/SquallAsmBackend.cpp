@@ -22,8 +22,8 @@ public:
       return ELF::R_SQUALL_BRANCH20;
     case Squall::Target20:
       return ELF::R_SQUALL_TARGET20;
-    case Squall::Code11:
-      return ELF::R_SQUALL_CODE11;
+    case Squall::Code12:
+      return ELF::R_SQUALL_CODE12;
     case FK_Data_4:
       return ELF::R_SQUALL_32;
     case FK_Data_8:
@@ -42,8 +42,8 @@ public:
   }
   MCFixupKindInfo getFixupKindInfo(MCFixupKind K) const override {
     static const MCFixupKindInfo Info[] = {{"fixup_squall_dest20", 43, 20, 0},
-                                           {"fixup_squall_target20", 2, 20, 0},
-                                           {"fixup_squall_code11", 28, 11, 0}};
+                                           {"fixup_squall_target20", 10, 20, 0},
+                                           {"fixup_squall_code12", 26, 12, 0}};
     return K < FirstTargetFixupKind ? MCAsmBackend::getFixupKindInfo(K)
                                     : Info[K - FirstTargetFixupKind];
   }

@@ -21,7 +21,7 @@ squall-rtl = "squall_tools.rtl:main"
 packages = ["squall_tools"]
 
 [tool.setuptools.package-data]
-squall_tools = ["*.zig"]
+squall_tools = ["*.zig", "*.patch"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

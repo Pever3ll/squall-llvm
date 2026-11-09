@@ -10,7 +10,7 @@
 namespace llvm {
 class MCContext;
 namespace Squall {
-enum Fixups { Dest20 = FirstTargetFixupKind, Target20, Code11 };
+enum Fixups { Dest20 = FirstTargetFixupKind, Target20, Code12 };
 const char *aluName(unsigned Op);
 int aluCode(StringRef Name);
 // Resolves instruction fields and reports malformed MCInsts without truncation.

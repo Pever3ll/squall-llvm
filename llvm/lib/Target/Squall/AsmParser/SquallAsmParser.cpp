@@ -153,11 +153,13 @@ public:
       return ParseStatus::Success;
     }
     if (N == ".slot") {
-      if (!isInt<62>(V)) {
-        error("constant slot payload must fit signed 62 bits");
+      // A slot read zero-extends its 62-bit payload, so a negative value
+      // would not read back as itself.
+      if (!isUInt<62>(V)) {
+        error("constant slot payload must fit unsigned 62 bits");
         return ParseStatus::Failure;
       }
-      V = (uint64_t(V) & ((UINT64_C(1) << 62) - 1)) | (UINT64_C(2) << 62);
+      V = uint64_t(V) | (UINT64_C(2) << 62);
     }
     if (end())
       return ParseStatus::Failure;
@@ -170,6 +172,56 @@ public:
     Inst.clear();
     Inst.setLoc(L);
     auto Parts = Name.split('.');
+    if (Parts.first == "write") {
+      // write[.a ack-dest] word [byte-mask]
+      if (!Parts.second.empty() && Parts.second != "a")
+        return error("write suffix must be .a");
+      bool Ack = Parts.second == "a";
+      Inst.setOpcode(Squall::WRITE);
+      MCInst Dest;
+      if (Ack) {
+        int Second;
+        if (destination(Second))
+          return true;
+        if (Second >= 0)
+          return error("write acknowledgement cannot have a secondary port");
+        Dest = Inst; // The destination operands, parsed first.
+        Inst.clear();
+        Inst.setOpcode(Squall::WRITE);
+        Inst.setLoc(L);
+      }
+      int64_t V, Mask = 0xff;
+      if (integer(V))
+        return true;
+      imm(V);
+      if (P.getTok().isNot(AsmToken::EndOfStatement) && integer(Mask))
+        return true;
+      imm(Mask);
+      if (Ack) {
+        Inst.addOperand(Dest.getOperand(0));
+        Inst.addOperand(Dest.getOperand(1));
+      } else {
+        imm(0);
+        imm(0);
+      }
+      imm(Ack);
+      return end();
+    }
+    if (Parts.first == "extract") {
+      if (!Parts.second.empty())
+        return error("extract matches no slot and takes no matching suffix");
+      Inst.setOpcode(Squall::EXTRACT);
+      int Second, Other;
+      if (destination(Second))
+        return true;
+      if (Second >= 0)
+        return error("send/extract cannot have a secondary ALU destination");
+      if (destination(Other))
+        return true;
+      if (Other >= 0)
+        return error("extract target cannot have a secondary port");
+      return end();
+    }
     int Rule = 0;
     if (!Parts.second.empty()) {
       if (Parts.second != "r" && Parts.second != "c")
@@ -177,33 +229,18 @@ public:
       Rule = Parts.second == "r" ? 2 : 1;
     }
     int Op = Squall::aluCode(Parts.first);
-    if (Name == "write") {
-      Inst.setOpcode(Squall::WRITE);
-      int64_t V;
-      if (integer(V))
-        return true;
-      imm(V);
-      return end();
-    }
-    bool Send = Parts.first == "send", Extract = Parts.first == "extract";
-    if (Op < 0 && !Send && !Extract)
+    bool Send = Parts.first == "send";
+    if (Op < 0 && !Send)
       return error("unknown Squall instruction");
     if (Op >= 0)
       imm(Op);
     int Second;
     if (destination(Second))
       return true;
-    if (Send || Extract) {
+    if (Send) {
       if (Second >= 0)
         return error("send/extract cannot have a secondary ALU destination");
-      Inst.setOpcode(Send ? Squall::SEND : Squall::EXTRACT);
-      if (Extract) {
-        int Other;
-        if (destination(Other))
-          return true;
-        if (Other >= 0)
-          return error("extract target cannot have a secondary port");
-      }
+      Inst.setOpcode(Squall::SEND);
     } else
       imm(Second);
     if (P.getTok().is(AsmToken::Hash)) {

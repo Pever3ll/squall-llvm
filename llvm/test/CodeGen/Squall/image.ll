@@ -35,9 +35,13 @@
 ; CHECK-NEXT: .rept 47101
 ; CHECK-NEXT: .quad -9223372036854775808
 ; CHECK-NEXT: .endr
+; The start token: ip 263 (__squall_start) in bits 28:0, the root frame
+; 16384 in bits 60:32, the left port in bit 61.
 ; CHECK:      .org 524272, 0
+; CHECK-NEXT: .quad 70368744177927
+; CHECK-NEXT: .quad 0
 ; CHECK:      .section .squall.config
-; CHECK:      \"abi\":\"squall-frame-slots-1\"
+; CHECK:      \"abi\":\"squall-frame-slots-2\"
 ; CHECK-SAME: \"argument_extensions\":[\"none\",\"none\"]
 ; CHECK-SAME: \"argument_types\":[\"i32\",\"i32\"]
 ; CHECK-SAME: \"argument_words\":[8,9]

@@ -13,8 +13,9 @@ import sys
 
 from .reference import checked, run_image
 
-ISACOMP_COMMIT = "899ee4456cabd88deb7d2ab1088ad721178dfb8b"
-HPDCACHE_COMMIT = "39fabbee1fa90bd4355444c042ed7568573cbfc1"
+# Isacomp squall-v2-rebase. Production needs vendor/cva6 (its mul/div unit).
+ISACOMP_COMMIT = "a21ccd67752c7b8bd9523818aa77b972f13ddb16"
+CVA6_COMMIT = "81245a47fad8fe1a5d562d953ef2662e099def76"
 VARIANTS = ("baseline", "pipeline", "production")
 
 
@@ -31,15 +32,15 @@ def build_simulator(isacomp=None, cache=None, *, variant="baseline", memory_late
     checked(["git", "-C", str(directory), "diff", "--exit-code", "HEAD", "--",
              "isa/squall", "core", "backends", "opt", "test", "vendor"])
     if variant == "production" and not shutil.which("verilator"):
-        raise RuntimeError("install Verilator for the HPDcache production RTL")
+        raise RuntimeError("install Verilator for the production RTL")
     if variant != "production" and (not shutil.which("iverilog") or not shutil.which("vvp")):
         raise RuntimeError("install Icarus Verilog (iverilog and vvp) for RTL tests")
     vendor_revision = None
     if variant == "production":
-        vendor = directory / "vendor/cv-hpdcache"
+        vendor = directory / "vendor/cva6"
         vendor_revision = checked(["git", "-C", str(vendor), "rev-parse", "HEAD"])
-        if vendor_revision != HPDCACHE_COMMIT:
-            raise RuntimeError(f"HPDcache must match the pinned Isacomp submodule; got {vendor_revision}")
+        if vendor_revision != CVA6_COMMIT:
+            raise RuntimeError(f"CVA6 must match the pinned Isacomp submodule; got {vendor_revision}")
         checked(["git", "-C", str(vendor), "diff", "--exit-code", "HEAD"])
     helper = Path(__file__).with_name("rtl_build.py")
     simulator_tool = "verilator" if variant == "production" else "iverilog"
@@ -54,7 +55,7 @@ def build_simulator(isacomp=None, cache=None, *, variant="baseline", memory_late
         checked([sys.executable, str(helper), str(directory), str(destination), variant,
                  str(memory_latency)], cwd=directory, timeout=600)
     result = json.loads(metadata.read_text())
-    result.update(isacomp_commit=ISACOMP_COMMIT, hpdcache_commit=vendor_revision,
+    result.update(isacomp_commit=ISACOMP_COMMIT, cva6_commit=vendor_revision,
                   simulator_version=tool_version.splitlines()[0], build_directory=str(destination),
                   rtl_sha256=hashlib.sha256((destination / "processor.v").read_bytes()).hexdigest(),
                   testbench_sha256=hashlib.sha256((destination / "tb.v").read_bytes()).hexdigest())
@@ -130,6 +131,8 @@ def run_rtl(directory, *, isacomp=None, cache=None, reference=None,
         raise RuntimeError("stall seed must fit positive i32 and jitter must be in [0, 200]")
     if stall_jitter and (variant != "production" or not memory_latency):
         raise RuntimeError("random stalls require production RTL with positive memory latency")
+    if stall_seed:
+        raise RuntimeError("the squall-v2-rebase bench draws its own jitter; stall seeds are unsupported")
     directory = Path(directory).resolve()
     manifest = json.loads((directory / "manifest.json").read_text())
     # The pinned baseline TB dumps 65536 64-bit words. Larger images require a
@@ -148,11 +151,14 @@ def run_rtl(directory, *, isacomp=None, cache=None, reference=None,
                       f"+stack_base={manifest['stack_base']}", f"+stack_top={manifest['stack_top']}",
                       f"+stack_low={manifest['stack_base'] - manifest['stack_token_capacity'] * 16}",
                       f"+max_tokens={manifest['max_cycles']}", "+max_idle=5000",
-                      f"+pipeline_length={simulator['pipeline_length']}",
-                      f"+stall_seed={stall_seed}", f"+stall_jitter={stall_jitter}"]
+                      f"+pipeline_length={simulator['pipeline_length']}"]
+    if variant == "production":
+        # The upstream bench's own memory model: a fixed latency, or with
+        # jitter each answer drawn from [0, latency].
+        command += [f"+mem_latency={memory_latency}", f"+mem_jitter={int(bool(stall_jitter))}"]
     stem = "rtl" if variant == "baseline" else f"rtl-{variant}-lat{memory_latency}"
     if stall_jitter:
-        stem += f"-seed{stall_seed}-jitter{stall_jitter}"
+        stem += "-jitter"
     trace_path = directory / f"{stem}.trace"
     try:
         simulation = subprocess.run(command, cwd=directory, capture_output=True, text=True, timeout=timeout)

@@ -98,8 +98,8 @@ def main():
     parser.add_argument("--opt", nargs="+", default=["0", "2"], choices=["0", "1", "2", "3", "s", "z"],
                         help="optimization levels, e.g. --opt 0 1 2")
     parser.add_argument("--random-seeds", nargs="*", type=int, default=[])
-    parser.add_argument("--stall-seeds", nargs="*", type=int, default=[])
-    parser.add_argument("--stall-jitter", type=int, default=19)
+    parser.add_argument("--jitter", action="store_true",
+                        help="also run production with each memory answer drawn from [0, latency]")
     parser.add_argument("--host-clang", default=shutil.which("clang"), help="independent host C compiler")
     parser.add_argument("--variants", nargs="+", choices=VARIANTS, default=list(VARIANTS))
     parser.add_argument("--latencies", nargs="+", type=int, default=[0, 5, 11])
@@ -108,8 +108,8 @@ def main():
     args = parser.parse_args()
     if args.reference_dir:
         os.environ["SQUALL_REFERENCE_DIR"] = str(args.reference_dir.resolve())
-    if args.stall_seeds and "production" not in args.variants:
-        parser.error("--stall-seeds requires --variants production")
+    if args.jitter and "production" not in args.variants:
+        parser.error("--jitter requires --variants production")
     args.opt = [f"-O{level}" for level in args.opt]
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -125,10 +125,11 @@ def main():
 
     configurations = [(variant, latency, 0, 0) for variant in args.variants
                       for latency in (args.latencies if variant == "production" else [0])]
-    configurations += [("production", 5, seed, args.stall_jitter) for seed in args.stall_seeds]
+    if args.jitter:
+        configurations += [("production", latency, 0, 1) for latency in args.latencies if latency]
 
     def key(variant, latency, seed, jitter):
-        return f"{variant}-lat{latency}" + (f"-seed{seed}-jitter{jitter}" if jitter else "")
+        return f"{variant}-lat{latency}" + ("-jitter" if jitter else "")
 
     report = {"compiler": "llvm squall backend", "optimization": args.opt, "fork_join": args.fork_join,
               "configurations": {}, "runs": []}

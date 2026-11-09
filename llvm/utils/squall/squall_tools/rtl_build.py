@@ -89,59 +89,71 @@ def compile_command(command, log, cwd=None):
         raise RuntimeError(f"RTL compilation failed; inspect {log}:\n{result.stderr[-4000:]}")
 
 
+def harden(tb):
+    """Fail loudly on a stack overrun, and mark a run that reached the end."""
+    tb = tb.replace("    integer stack_top;", "    integer stack_top;\n    integer stack_low;", 1)
+    tb = tb.replace('        if (!$value$plusargs("max_tokens=%d", max_tokens))',
+                    '        if (!$value$plusargs("stack_low=%d", stack_low)) $fatal(1, "missing stack bound");\n'
+                    '        if (!$value$plusargs("max_tokens=%d", max_tokens))', 1)
+    tb = tb.replace("            cycle = cycle + 1;",
+                    '            if (dut.stack_top_rd < stack_low || dut.stack_top_rd > stack_base)\n'
+                    '                $fatal(1, "token stack outside reserved region");\n'
+                    "            cycle = cycle + 1;", 1)
+    tb = tb.replace('        $finish;\n    end\nendmodule', '        $display("SIM_COMPLETE");\n        $finish;\n    end\nendmodule', 1)
+    for marker in ("stack_low", "token stack outside", "SIM_COMPLETE"):
+        if marker not in tb:
+            raise RuntimeError(f"upstream testbench changed; cannot add {marker}")
+    return tb
+
+
 def main():
     root, output, variant, latency = sys.argv[1:]
     root, output, latency = Path(root).resolve(), Path(output).resolve(), int(latency)
-    sys.path[:0] = [str(root), str(root / "test"), str(root / "isa/squall/generators")]
+    sys.path[:0] = [str(root), str(root / "test"), str(root / "isa/squall/generators"),
+                    str(root / "isa/squall/tools")]
     output.mkdir(parents=True, exist_ok=True)
-    from squall_fixtures import tie_off_resets
+    import squall_v2_fixtures as F
     from create_squall_pipeline import pipelined
     from squall_build import build, verilog
 
     with contextlib.redirect_stdout(io.StringIO()) as generation:
         if variant == "production":
-            # Use the actual production generator, including its precise pass
-            # order and default cache geometries; do not recreate a lookalike.
+            # The actual production generator, with its own pass order and
+            # cache geometries; not a lookalike.
             from create_squall_prod import main as production_main
             if production_main(["-o", str(output / "processor.v")]) not in (None, 0):
                 raise RuntimeError("production generator failed")
-            rtl, depth = (output / "processor.v").read_text(), 6
+            rtl = (output / "processor.v").read_text()
+            depth = None
         else:
             graph = build(quiet=True) if variant == "baseline" else pipelined("full", "stall", quiet=True)
             rtl = verilog(graph, quiet=True)
             depth = (graph.get_max_pipe_time() or 0) + 1
     (output / "generate.log").write_text(generation.getvalue())
     (output / "processor.v").write_text(rtl)
-    tb = retarget((root / "isa/squall/squall_v2_tb.v").read_text(), rtl)
-    # The original bench prints DRAINED before caches are flushed. Add explicit
-    # failure assertions and a completion marker after flush/quiescence.
     if variant == "production":
-        from extmem_tb import build_tb, QUIESCE_LIMIT
-        tb = memory_stalls(build_tb(rtl, tb, latency), latency)
-        tb = tb.replace('        $display("FLUSH %0d", f_guard);',
-                        f'        if (f_guard >= {QUIESCE_LIMIT}) $fatal(1, "cache flush timed out");\n'
-                        '        $display("FLUSH %0d", f_guard);')
-        tb = tb.replace('        $display("QUIESCE %0d", q_guard);',
-                        f'        if (q_guard >= {QUIESCE_LIMIT}) $fatal(1, "memory quiescence timed out");\n'
-                        '        $display("QUIESCE %0d", q_guard);')
+        # As create_squall_prod.check() prepares its bench.
+        tb = (root / "isa/squall/squall_prod_tb.v").read_text()
+        tb = F.wire_cache_flush(rtl, F.tie_off_resets(rtl, F.retarget_token_read(rtl, tb)))
+        if "PIPE_Decode_stall_ctrl" in rtl:
+            tb = tb.replace("`define TB_STALL_EXPR 1'b0",
+                            "`define TB_STALL_EXPR dut.PIPE_Decode_stall_ctrl")
+        depth = 6
     else:
-        tb = tie_off_resets(rtl, tb)
-    tb = tb.replace("    integer stack_top;", "    integer stack_top;\n    integer stack_low;")
-    tb = tb.replace('        // Two bounds in their own units',
-                    '        if (!$value$plusargs("stack_low=%d", stack_low)) $fatal(1, "missing stack bound");\n'
-                    '        // Two bounds in their own units', 1)
-    tb = tb.replace("            cycle = cycle + 1;",
-                    '            if (dut.stack_top_rd < stack_low || dut.stack_top_rd > stack_base)\n'
-                    '                $fatal(1, "token stack outside reserved region");\n'
-                    "            cycle = cycle + 1;", 1)
-    tb = tb.replace('        $finish;\n', '        $display("SIM_COMPLETE");\n        $finish;\n')
+        tb = retarget((root / "isa/squall/squall_v2_tb.v").read_text(), rtl)
+        tb = F.tie_off_resets(rtl, tb)
+    tb = harden(tb)
     (output / "tb.v").write_text(tb)
     if variant == "production":
         command = ["verilator", "--binary", "--timing", "-Wno-fatal", "-Wno-WIDTH",
                    "-Wno-UNOPTFLAT", "-Wno-LATCH", "-Wno-BLKANDNBLK", "-Wno-MULTIDRIVEN",
-                   "--public-flat-rw", "--top-module", "squall_v2_tb", "-j", "1", "-o", "sim",
-                   "-f", str(root / "vendor/hpdcache_sources.f"), str(output / "processor.v"),
-                   str(output / "tb.v"), "--Mdir", str(output / "obj")]
+                   "--public-flat-rw", "--top-module", "squall_v2_tb", "-j", "1", "-o", "sim"]
+        if "hpdcache" in rtl:
+            command += ["-f", str(root / "vendor/hpdcache_sources.f")]
+        for required in re.findall(r"^// isacomp-requires: (\S+)$", rtl, re.M):
+            if "hpdcache" not in required:
+                command += ["-F", str(root / required)]
+        command += [str(output / "processor.v"), str(output / "tb.v"), "--Mdir", str(output / "obj")]
         compile_command(command, output / "compile.log", root / "vendor")
         runner = [str(output / "obj/sim")]
     else:

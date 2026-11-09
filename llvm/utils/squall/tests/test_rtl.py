@@ -39,6 +39,7 @@ PROGRAMS = {
 
 @pytest.mark.parametrize("options,error", [
     ({"stall_seed": -1}, "stall seed"),
+    ({"stall_seed": 17}, "stall seeds are unsupported"),
     ({"stall_jitter": 201}, "jitter"),
     ({"stall_jitter": 1}, "require production"),
     ({"variant": "production", "memory_latency": 0, "stall_jitter": 1}, "positive memory latency"),
@@ -62,17 +63,17 @@ def test_programs_on_rtl(tmp_path, program, variant):
 
 @requires_llvm
 @requires_rtl
-def test_seeded_stalls_repeat_and_change_timing(tmp_path):
+def test_memory_jitter_repeats_and_changes_timing(tmp_path):
+    # The squall-v2-rebase production bench draws each memory answer's delay
+    # from [0, latency] with its own fixed generator.
     image = compile_ir(tmp_path, "define i32 @main(i32 %a) { %r = mul i32 %a, -7\nret i32 %r }", [6])
-    options = {"variant": "production", "memory_latency": 5, "stall_jitter": 19}
-    first = run_rtl(image, stall_seed=17, **options)
-    repeat = run_rtl(image, stall_seed=17, **options)
-    other = run_rtl(image, stall_seed=91, **options)
-    fixed = run_rtl(image, variant="production", memory_latency=5)
-    assert first["result"] == repeat["result"] == other["result"] == fixed["result"] == -42
+    options = {"variant": "production", "memory_latency": 5}
+    first = run_rtl(image, stall_jitter=1, **options)
+    repeat = run_rtl(image, stall_jitter=1, **options)
+    fixed = run_rtl(image, **options)
+    assert first["result"] == repeat["result"] == fixed["result"] == -42
     assert first["wall_cycles"] == repeat["wall_cycles"]
-    assert first["wall_cycles"] != other["wall_cycles"]
-    assert first["wall_cycles"] > fixed["wall_cycles"]
+    assert first["wall_cycles"] != fixed["wall_cycles"]
 
 
 @requires_llvm

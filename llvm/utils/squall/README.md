@@ -8,6 +8,25 @@ compile C and LLVM IR into a complete Squall memory image in an ELF object;
 This directory holds the build helper, a loader and test harness
 (`squall_tools`), examples, and the execution tests.
 
+## Hardware contract
+
+The encoding, token layout, and slot semantics are those of Isacomp's
+`squall-v2-rebase` branch at `a21ccd67752c7b8bd9523818aa77b972f13ddb16`
+(`isa/squall/*.isa`):
+
+* Tags: instruction word in bits 28:0, frame word in bits 60:32, port in bit
+  61, so a tag fits the 62-bit payload of a slot.
+* Slot reads zero-extend the 62-bit payload.
+* Extract is monadic; Send is the dyadic form with bit 42 set; Write has a
+  byte mask (38:31) and an optional acknowledgement (39); dyadic slots are 12
+  bits at 37:26; `bler`/`blel` exist.
+
+The reference interpreter is upstream's at `5882fe54` with exactly those two
+differences (tag layout, zero-extended slot reads) patched in; see
+`squall_tools/reference-rebase-rtl.patch`. Images carry format
+`squall-v2-image-2` and ABI `squall-frame-slots-2`; the tools refuse images of
+the earlier contract.
+
 ## Build
 
 Prerequisites: CMake 3.20+, Ninja, Python 3.11+, and a C++17 host compiler.
@@ -117,12 +136,16 @@ places frame objects after the highest register a function uses.
 encoded Squall words. A chain's final token continues at the next word, so
 machine code runs in layout order with one control token; branches name block
 labels. For example, `%r = add i32 %a, %b` becomes: read `S0` into the token,
-`add.r` with slot `S1`, sign-extend the 64-bit result to 32 bits, store into the
-result register. A read of the register just stored is omitted because the
+`add.r` with slot `S1`, zero-extend the low 32 bits of the 64-bit result, store
+into the result register. A read of the register just stored is omitted because the
 store's token still carries the value.
 
 **Values.** Integers up to 64 bits, 32-bit pointers, and `float` and `double`
-in software. Registers hold 32-bit values sign-extended to the 64-bit token;
+in software. Registers hold 32-bit values zero-extended to the 64-bit token,
+because a slot read zero-extends its 62-bit payload: a negative value never
+sits in a slot. Signed division, remainder, high product, and arithmetic shift
+extend their operands in the token instead (a negative divisor is replaced by
+its magnitude, and the dividend negated); signed comparisons flip bit 31 first.
 64-bit integers are legalized into 32-bit halves. 64-bit division is expanded
 into loops in IR, and `TargetLibraryInfo` marks every C library function
 unavailable, so optimizations never introduce calls such as `strlen`.
@@ -147,7 +170,7 @@ token's value.
 **Memory.** Memory is byte-addressed in four-byte little-endian cells, one per
 64-bit matching slot, so a byte address is four times a word address plus the
 byte's position, and C sizes stay conventional. A cell holds its 32-bit value
-sign-extended. Frame objects, and globals below word 2048, start on cell
+zero-extended. Frame objects, and globals below word 2048, start on cell
 boundaries and are read and written as static slots. Other pointers go through
 an inline helper: the caller sends a token whose FP is the target word, and the
 helper accesses frame slot 0 there and returns through a saved continuation
@@ -274,7 +297,8 @@ entry:   add.r (0x58).l.r [0x4]  ; dest offset 0x58 words, port L; secondary to 
          dupr.r finish.l (data)  ; code-relative slot named by a label
          add finish.l #-7        ; '#' marks a monadic immediate
 finish:  write 1
-mint:    extract.r out.l callee.r [0]
+         write.a out.l 2 0x0f    ; store bytes 0-3 of word 2, then send the value on
+mint:    extract out.l callee.r  ; monadic: mint a tag for callee in this frame
 out:     send.r halt.l [0]
 callee:  nop halt.l #0
 data:    .slot 42
@@ -285,10 +309,12 @@ data:    .slot 42
 | `op`, `op.r`, `op.c` with a slot | Once, Read, Const matching |
 | `label.l` / `label.r`, `(N).l` | Destination and its port; `N` is a signed word offset |
 | `label.l.r` (or `label.l r`) | Also send the secondary result to the next word, port R |
-| `[N]`, `(label)` / `(N)`, `N` | Frame-relative, code-relative, absolute slot |
+| `[N]`, `(label)` / `(N)`, `N` | Frame-relative (0-4095), code-relative (-2048-2047), absolute (0-4095) slot |
 | `#N` | Signed 32-bit immediate (no matching suffix) |
-| `write N` | Store the token value at absolute word `N` |
-| `.slot N` / `.word N` | Constant slot / raw 64-bit word |
+| `extract D T` | Send a tag for `T` in the token's frame to `D` (no slot) |
+| `write N [M]` | Store the token value at absolute word `N`, bytes selected by mask `M` (default `0xff`) |
+| `write.a D N [M]` | The same, then send the token value on to `D` |
+| `.slot N` / `.word N` | Constant slot (unsigned 62-bit payload) / raw 64-bit word |
 | `.squall_origin N` | Word address assumed for `.text` (default 256) |
 | `halt` | Word 0, the discard destination, unless the file defines `halt` |
 
@@ -324,21 +350,25 @@ python3 ../squall-llvm-build/bin/llvm-lit -v llvm/test/CodeGen/Squall llvm/test/
   others), seeded random programs with byte and 16-bit arrays, and the
   three-file `examples/linked` program, at `-O0`/`-O1`/`-O2` with and without
   fork/join, compared with the same C compiled and run on the host.
-* `test_mc.py`: `llvm-mc` encodings compared with the upstream Zig assembler,
+* `test_mc.py`: `llvm-mc` encodings compared with the upstream Zig assembler
+  and, with `SQUALL_ISACOMP_DIR`, with Isacomp's `isa/squall/tools/sqasm.py`;
   disassembly round trip, and assembler diagnostics.
 * `test_diagnostics.py`: unsupported input produces errors, not crashes.
-* `test_rtl.py`: images on the baseline, pipelined, and production (HPDcache)
-  RTL, including seeded memory stalls and fork/join lanes, which must also run
-  in fewer cycles on the overlapping cores.
+* `test_rtl.py`: images on the baseline, pipelined, and production RTL
+  (native caches, CVA6 mul/div), including memory latency with jitter and
+  fork/join lanes, which must also run in fewer cycles on the overlapping
+  cores.
 
 `rtl_regression.py` runs the full C matrix on every RTL configuration and writes
 a report; `--fork-join` compiles it with parallel lanes. `embench.py` builds
 the Embench-IoT benchmarks (from a separate checkout) for Squall and the host
 and runs them on the interpreter and, with `--isacomp-dir`, the RTL: with
 Embench-IoT 1.0, all 19 pass at `-O0` and `-O2` (one repetition each; `cubic`
-needs a larger image for its math functions). The Zig interpreter (pinned commit `03dcc01f`) is fetched and built
-automatically; the RTL tests need Icarus Verilog, Verilator, and the Isacomp
-checkout pinned in `squall_tools/rtl.py`.
+needs a larger image for its math functions). The Zig interpreter (pinned
+commit `5882fe54`, with `squall_tools/reference-rebase-rtl.patch`) is fetched
+and built automatically; the RTL tests need Icarus Verilog, Verilator, and the
+Isacomp checkout pinned in `squall_tools/rtl.py`, with `vendor/cva6` checked
+out for the production core.
 
 ## Limitations
 
