@@ -57,7 +57,7 @@ other:
 ; CHECK-NEXT: dupr.c (1).l [12]
 ; CHECK-NEXT: extract.r (1).r (6).r [0]
 ; CHECK-NEXT: dupr.c (1).l [8]
-; CHECK-NEXT: extract.r (1).l .Lsquall.entry.add.l [0]
+; CHECK-NEXT: extract.r (1).l .Lsquall_entry{{[0-9]+}}.l [0]
 ; CHECK-NEXT: add.r (1).l (2)
 ; CHECK-NEXT: send.r __squall_halt.l [0]
 ; CHECK-NEXT: .quad -9223372032559808512

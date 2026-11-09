@@ -310,6 +310,149 @@ def test_globals_beyond_absolute_slot_range(tmp_path, opt):
     }""", [2999], 42, opt=opt)
 
 
+def test_global_aliases(tmp_path, opt):
+    # An alias names its aliasee, possibly at an offset; the image has no
+    # symbols, so every use resolves to the variable itself. Without LTO's
+    # optimizations (clang -O0) aliases reach code generation intact.
+    execute(tmp_path, """@x = global [2 x i32] [i32 5, i32 9]
+    @y = alias i32, getelementptr (i8, ptr @x, i32 4)
+    @z = alias i32, ptr @x
+    define ptr @addr() noinline { ret ptr @y }
+    define i32 @main() {
+      %p = call ptr @addr()
+      %v = load i32, ptr %p
+      store i32 11, ptr @z
+      %a = load i32, ptr @x
+      %same = icmp eq ptr %p, getelementptr (i8, ptr @x, i32 4)
+      %s = zext i1 %same to i32
+      %h = mul i32 %v, 100
+      %t = mul i32 %s, 1000
+      %r1 = add i32 %h, %a
+      %r = add i32 %r1, %t
+      ret i32 %r
+    }""", expected=1911, opt=opt)
+
+
+def test_preferred_alignment_padding_moves_the_frame_arena(tmp_path, opt):
+    # .prefalign pads before a function up to its preferred alignment; with
+    # code past a quarter of memory, the frame arena must start past that
+    # padding as well.
+    execute(tmp_path, """@table = internal global [30000 x i32] zeroinitializer
+    define internal i32 @helper(i32 %x) noinline {
+      %y = add i32 %x, 1
+      ret i32 %y
+    }
+    define i32 @main(i32 %i) prefalign(256) {
+      %p = getelementptr [30000 x i32], ptr @table, i32 0, i32 %i
+      store i32 41, ptr %p
+      %v = load i32, ptr %p
+      %w = call i32 @helper(i32 %v)
+      ret i32 %w
+    }""", [29999], 42, opt=opt)
+    manifest = json.loads((tmp_path / "image/manifest.json").read_text())
+    assert manifest["symbols"]["main"] % 32 == 0, manifest["symbols"]  # 256-byte aligned.
+
+
+def test_fall_through_into_aligned_blocks(tmp_path):
+    # Every block aligned to 256 bytes: code that falls into the next block
+    # must jump over the alignment padding, which is not executable.
+    # (Block placement, which applies the alignment, does not run at -O0.)
+    execute(tmp_path, """define i32 @main(i32 %n) {
+    entry:
+      br label %loop
+    loop:
+      %i = phi i32 [ 0, %entry ], [ %next, %loop ]
+      %s = phi i32 [ 0, %entry ], [ %sum, %loop ]
+      %t = mul i32 %i, 3
+      %sum = add i32 %s, %t
+      %next = add i32 %i, 1
+      %more = icmp slt i32 %next, %n
+      br i1 %more, label %loop, label %done
+    done:
+      %r = add i32 %sum, 1
+      ret i32 %r
+    }""", [10], 136, opt="-O2", options=("-align-all-blocks=8",))
+
+
+def test_aliased_entry_function(tmp_path, opt):
+    # The entry is found by name; an alias that names it must still start the
+    # program after aliases are resolved, even when the aliasee is internal.
+    execute(tmp_path, """define internal i32 @real(i32 %x) {
+      %r = add i32 %x, 40
+      ret i32 %r
+    }
+    @main = alias i32 (i32), ptr @real""", [2], 42, opt=opt)
+
+
+@pytest.mark.parametrize("order", ["entry-first", "entry-last"])
+def test_chained_entry_aliases(tmp_path, order):
+    # The entry resolves through a chain of aliases whatever their order.
+    aliases = ["@main = alias i32 (), ptr @mid", "@mid = alias i32 (), ptr @real"]
+    if order == "entry-last":
+        aliases.reverse()
+    execute(tmp_path, "define internal i32 @real() {\n  ret i32 42\n}\n" + "\n".join(aliases),
+            expected=42)
+
+
+def test_entry_marked_used(tmp_path, opt):
+    # __attribute__((used)) puts main in llvm.compiler.used, beside the
+    # runtime functions that are stripped when nothing calls them.
+    execute(tmp_path, """@llvm.compiler.used = appending global [1 x ptr] [ptr @main], section "llvm.metadata"
+    define i32 @main() {
+      ret i32 42
+    }""", expected=42, opt=opt)
+
+
+@pytest.mark.parametrize("kind,value,expected", [
+    ("float", 0x7f800001, 0x7fc00001),   # Signaling NaN: quieted, payload kept.
+    ("float", 0xff800001, 0xffc00001),   # Negative signaling NaN.
+    ("float", 0x7fc00005, 0x7fc00005),   # Quiet NaN.
+    ("float", 0x7f800000, 0x7f800000),   # Infinity.
+    ("float", 0x00000001, 0x00000001),   # Subnormal: kept in IEEE mode.
+    ("float", 0x80000000, 0x80000000),   # -0.0.
+    ("double", 0x7ff00000, 0x7ff80000),  # High word of a signaling NaN.
+    ("double", 0x7ff80000, 0x7ff80000),  # Quiet NaN.
+    ("double", 0x3ff00000, 0x3ff00000),  # 1.0.
+])
+def test_canonicalize_quiets_signaling_nans(tmp_path, kind, value, expected, opt):
+    if kind == "float":
+        ir = """define i32 @main(i32 %bits) {
+          %f = bitcast i32 %bits to float
+          %c = call float @llvm.canonicalize.f32(float %f)
+          %r = bitcast float %c to i32
+          ret i32 %r
+        }
+        declare float @llvm.canonicalize.f32(float)"""
+        arguments = [value]
+    else:
+        # The low word 1 makes 0x7ff00000 a signaling NaN rather than infinity.
+        ir = """define i32 @main(i32 %lo, i32 %hi) {
+          %l = zext i32 %lo to i64
+          %h0 = zext i32 %hi to i64
+          %h = shl i64 %h0, 32
+          %bits = or i64 %h, %l
+          %d = bitcast i64 %bits to double
+          %c = call double @llvm.canonicalize.f64(double %d)
+          %cb = bitcast double %c to i64
+          %top = lshr i64 %cb, 32
+          %r = trunc i64 %top to i32
+          ret i32 %r
+        }
+        declare double @llvm.canonicalize.f64(double)"""
+        arguments = [1, value]
+    execute(tmp_path, ir, arguments, i32(expected), opt=opt)
+
+
+def test_high_bit_pointer_arguments(tmp_path):
+    # Registers hold pointers sign-extended like integers, so a loaded
+    # pointer equals the same constant in code.
+    execute(tmp_path, """define i32 @main(ptr %p) {
+      %eq = icmp eq ptr %p, inttoptr (i32 -2147483648 to ptr)
+      %r = zext i1 %eq to i32
+      ret i32 %r
+    }""", [0x80000000], 1)
+
+
 def test_null_load_traps_before_access(tmp_path):
     execute(tmp_path, "define i32 @main(ptr %p) { %v = load i32, ptr %p, align 4\n ret i32 %v }",
             [0], status=3)

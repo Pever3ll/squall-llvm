@@ -76,6 +76,10 @@ public:
                     const MCSubtargetInfo *) const override {
     if (Count % 8)
       return false;
+    // Padding is never executed: no single word can pass on a token arriving
+    // on either port unchanged, so code generation jumps over it. Zero words
+    // stop a token that reaches it by mistake (each sends to itself) rather
+    // than deliver it with a changed value or port.
     O.write_zeros(Count);
     return true;
   }

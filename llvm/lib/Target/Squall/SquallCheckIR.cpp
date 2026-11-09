@@ -107,8 +107,9 @@ class SquallCheckIR : public ModulePass {
            "Squall memory accesses must be integers, pointers, float, or "
            "double",
            I.getDebugLoc());
-    // Volatile accesses need no special treatment: expanded code runs with a
-    // single control token, in program order.
+    // Volatile accesses are kept in program order by code generation: the
+    // AsmPrinter never forwards a volatile load, and fork/join never splits
+    // ordered accesses into separate lanes.
     if (Atomic)
       fail(F, "atomic accesses are not supported on Squall", I.getDebugLoc());
   }
@@ -147,7 +148,10 @@ class SquallCheckIR : public ModulePass {
       } else if (const auto *S = dyn_cast<StoreInst>(&I)) {
         checkMemoryAccess(F, I, S->getValueOperand()->getType(), S->isAtomic());
       } else if (const auto *A = dyn_cast<AllocaInst>(&I)) {
-        if (!A->isStaticAlloca())
+        // SquallLowerAlloca leaves these for this check: no fixed size.
+        if (A->getAllocatedType()->isScalableTy())
+          fail(F, "scalable vectors are not supported on Squall", Loc);
+        else if (!A->isStaticAlloca())
           fail(F,
                "dynamic or non-entry-block allocas are not supported on "
                "Squall",
@@ -168,6 +172,25 @@ class SquallCheckIR : public ModulePass {
         fail(F, Twine("'") + I.getOpcodeName() + "' is not supported on Squall",
              Loc);
       } else if (const auto *Call = dyn_cast<CallInst>(&I)) {
+        if (Call->isMustTailCall())
+          fail(F, "musttail calls are not supported on Squall", Loc);
+        // A return is a send to a continuation tag held in the frame, and
+        // frames have no pointer register: there is no address to report.
+        if (const auto *II = dyn_cast<IntrinsicInst>(Call)) {
+          switch (II->getIntrinsicID()) {
+          case Intrinsic::returnaddress:
+          case Intrinsic::addressofreturnaddress:
+          case Intrinsic::frameaddress:
+          case Intrinsic::sponentry:
+            fail(F,
+                 Twine("'") + II->getCalledFunction()->getName() +
+                     "' is not supported on Squall",
+                 Loc);
+            continue;
+          default:
+            break;
+          }
+        }
         // SquallLowerFloat has rewritten the floating-point intrinsics it
         // supports; SelectionDAG could only turn the rest into library
         // calls that Squall has no table for.

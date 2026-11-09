@@ -136,6 +136,20 @@ SDValue SquallTargetLowering::LowerOperation(SDValue Op,
     return DAG.getStore(Op.getOperand(0), DL, Address, Op.getOperand(1),
                         MachinePointerInfo(List));
   }
+  // Legalization treats these as custom even though they are never set so.
+  // The IR checker rejects their intrinsics; report rather than crash if
+  // one arrives another way.
+  case ISD::FRAMEADDR:
+  case ISD::RETURNADDR:
+  case ISD::ADDROFRETURNADDR:
+  case ISD::SPONENTRY: {
+    SDLoc DL(Op);
+    unsupported(DAG, DL, "return and frame addresses are not available");
+    SDValue Zero = DAG.getConstant(0, DL, Op.getValueType());
+    if (Op->getNumValues() == 1)
+      return Zero;
+    return DAG.getMergeValues({Zero, Op.getOperand(0)}, DL);
+  }
   default:
     llvm_unreachable("unexpected custom lowering");
   }

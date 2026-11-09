@@ -11,8 +11,8 @@
 ; with frame pointer 0. Initializers hold it as a layout-time expression.
 
 ; CHECK:      table:
-; CHECK-NEXT: .quad ((.Lsquall.entry.inc-__squall_halt)/8)|-9223372036854775808
-; CHECK-NEXT: .quad ((.Lsquall.entry.dec-__squall_halt)/8)|-9223372036854775808
+; CHECK-NEXT: .quad (([[INC:.Lsquall_entry[0-9]+]]-__squall_halt)/8)|-9223372036854775808
+; CHECK-NEXT: .quad (([[DEC:.Lsquall_entry[0-9]+]]-__squall_halt)/8)|-9223372036854775808
 @table = global [2 x ptr] [ptr @inc, ptr @dec]
 
 define i32 @inc(i32 %x) {
@@ -29,7 +29,7 @@ define i32 @dec(i32 %x) {
 ; MIR-LABEL: name: address
 ; MIR: MOVG @dec
 ; CHECK-LABEL: address:
-; CHECK:      extract.r (1).l .Lsquall.entry.dec.l [0]
+; CHECK:      extract.r (1).l [[DEC]].l [0]
 ; CHECK-NEXT: and (1).{{[lr]}} #536870911
 define ptr @address() {
   ret ptr @dec

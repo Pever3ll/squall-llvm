@@ -23,7 +23,13 @@ pytestmark = requires_llvm
     ("declare void @g()\n@t = global ptr @g\ndefine i32 @main() { ret i32 0 }", "global 't'"),
     ("define i32 @main() { %v = call i32 asm \"\", \"=r\"()\nret i32 %v }", "inline assembly"),
     ("define i32 @other() { ret i32 0 }", "entry function 'main' is not defined"),
+    # No code at all: the missing entry is still reported, not an empty object.
+    ("@x = global i32 1", "entry function 'main' is not defined"),
     ("define i64 @main() { ret i64 0 }", "entry function 'main' must"),
+    ("define ptr @main() { %p = call ptr @llvm.returnaddress.p0(i32 0)\nret ptr %p }\n"
+     "declare ptr @llvm.returnaddress.p0(i32)", "'llvm.returnaddress.p0' is not supported"),
+    ("define ptr @main() { %p = call ptr @llvm.frameaddress.p0(i32 0)\nret ptr %p }\n"
+     "declare ptr @llvm.frameaddress.p0(i32)", "'llvm.frameaddress.p0' is not supported"),
 ])
 def test_unsupported_ir(tmp_path, ir, error):
     source = tmp_path / "input.ll"
@@ -35,6 +41,18 @@ def test_unsupported_ir(tmp_path, ir, error):
     assert "PLEASE submit" not in result.stderr and "Stack dump" not in result.stderr
     # Only the diagnostics themselves: the image is not emitted half-built.
     assert "Undefined" not in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize("tokens", [0, 100000])
+def test_token_stack_must_fit(tmp_path, tokens):
+    # A stack larger than memory would wrap the arena's end and pass the
+    # layout check with an arena of about 2^61 words.
+    source = tmp_path / "input.ll"
+    source.write_text("define i32 @main() { ret i32 7 }\n")
+    result = run_tool("llc", "-mtriple=squallv2", "-filetype=obj", f"-squall-stack-tokens={tokens}",
+                      source, "-o", tmp_path / "x.o", check=False)
+    assert result.returncode and "-squall-stack-tokens must be between 1 and" in result.stderr, \
+        result.stderr
 
 
 def test_clang_reports_source_locations(tmp_path):

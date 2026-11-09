@@ -68,6 +68,9 @@ static cl::opt<uint64_t>
 static cl::opt<unsigned>
     StackTokens("squall-stack-tokens", cl::init(1024),
                 cl::desc("Token stack capacity of the Squall image"));
+
+StringRef llvm::Squall::entryName() { return EntryName; }
+
 namespace {
 
 // ALU operation numbers of the Squall v2 ISA.
@@ -419,6 +422,13 @@ public:
   void emitBasicBlockEnd(const MachineBasicBlock &MBB) override;
   void emitFunctionEntryLabel() override;
   void emitBasicBlockStart(const MachineBasicBlock &MBB) override;
+  // An aligned block is entered by a jump over its padding, so it needs its
+  // label even when only its layout predecessor reaches it.
+  bool isBlockOnlyReachableByFallthrough(
+      const MachineBasicBlock *MBB) const override {
+    return MBB->getAlignment() <= Align(8) &&
+           AsmPrinter::isBlockOnlyReachableByFallthrough(MBB);
+  }
 
 private:
   MCSection *imageSection() {
@@ -440,12 +450,17 @@ private:
     return MF->getSubtarget().getRegisterInfo()->getEncodingValue(MO.getReg());
   }
   unsigned globalWord(const MachineOperand &MO);
+  DenseMap<const Function *, MCSymbol *> EntryLabels;
   /// A local label at a function's entry. References to the (possibly
   /// global) function symbol would become relocations, and there is no
   /// Squall linker to apply them.
   MCSymbol *entryLabel(const Function &F) {
-    return OutContext.getOrCreateSymbol(Twine(".Lsquall.entry.") +
-                                        getSymbol(&F)->getName());
+    // Symbol names may end in .l/.r, which the assembler interprets as
+    // destination ports. Use an opaque local name, independent of the user.
+    auto &Label = EntryLabels[&F];
+    if (!Label)
+      Label = OutContext.createTempSymbol("squall_entry");
+    return Label;
   }
   /// Function pointers in the initializer being emitted: cell, function.
   SmallVector<std::pair<uint64_t, const Function *>, 4> FunctionCells;
@@ -463,7 +478,7 @@ private:
   /// The chain of encoded words for one machine instruction.
   Chain expand(const MachineInstr &MI, unsigned Scratch);
   /// Emit a chain after the pending one, dropping a redundant first read.
-  void append(Chain C);
+  void append(Chain C, bool ForwardRead = true);
   void emitLaneMarker(const MachineInstr &MI);
   json::Object manifest(const Module &M) const;
   void flush(unsigned Port) {
@@ -619,6 +634,18 @@ void SquallAsmPrinter::emitImageHeader(Module &M) {
   // size is known. Nothing in the code depends on where it starts.
   FrameBase = alignTo(MemoryWords / 4, 4);
   StackBase = MemoryBytes - 16;
+  // The token stack sits below StackBase, and at least one frame's reach
+  // must remain between the default arena start and the stack. (64 KiB
+  // memory always leaves that much room, so this cannot underflow.)
+  uint64_t MaxStackTokens =
+      (StackBase - (FrameBase + Squall::MaxSlotWord + 1) * 8) / 16;
+  if (StackTokens == 0 || StackTokens > MaxStackTokens) {
+    error(Twine("-squall-stack-tokens must be between 1 and ") +
+          Twine(MaxStackTokens) + " for a " + Twine(MemoryBytes / 1024) +
+          " KiB image");
+    Entry = nullptr;
+    return;
+  }
   ArenaEnd = (StackBase - uint64_t(StackTokens) * 16) / 8;
   if (CodeStart + Squall::MaxSlotWord + 1 > ArenaEnd ||
       FrameBase + Squall::MaxSlotWord + 1 > ArenaEnd) {
@@ -907,17 +934,37 @@ void SquallAsmPrinter::countPadding(Align Alignment) {
     CodeWords += Alignment.value() / 8 - 1;
 }
 
+// Padding is not executable: a word forwards a token on one fixed port, and
+// fills the other operand with its immediate, so no padding word passes every
+// token on unchanged. Code that would fall into an aligned block through its
+// padding jumps over it to the block's label instead.
 void SquallAsmPrinter::emitBasicBlockStart(const MachineBasicBlock &MBB) {
-  countPadding(MBB.getAlignment());
+  if (MBB.getAlignment() > Align(8)) {
+    if (const MachineBasicBlock *Prev = MBB.getPrevNode();
+        Entry && Prev && Prev->isSuccessor(&MBB)) {
+      Chain Over(Halt);
+      Over.jump(Dest::symbol(MBB.getSymbol()));
+      Over.emit(*OutStreamer, TM.getMCSubtargetInfo(), OutContext);
+      CodeWords += Over.size();
+    }
+    countPadding(MBB.getAlignment());
+  }
   AsmPrinter::emitBasicBlockStart(MBB);
+  // Calls enter at the first block itself, after any padding before it.
+  if (&MBB == &MF->front() && MBB.getAlignment() > Align(8))
+    OutStreamer->emitLabel(entryLabel(MF->getFunction()));
 }
 
 void SquallAsmPrinter::emitFunctionEntryLabel() {
-  // The function's alignment was emitted just before its label.
-  countPadding(
-      std::max(MF->getAlignment(), MF->getFunction().getAlign().valueOrOne()));
+  // The function's alignment was emitted just before its label: up to its
+  // preferred alignment (a .prefalign), which includes the minimum.
+  countPadding(std::max(MF->getPreferredAlignment(),
+                        MF->getFunction().getAlign().valueOrOne()));
   AsmPrinter::emitFunctionEntryLabel();
-  OutStreamer->emitLabel(entryLabel(MF->getFunction()));
+  // An aligned first block is padded after this point; emitBasicBlockStart
+  // places the entry there instead.
+  if (MF->front().getAlignment() <= Align(8))
+    OutStreamer->emitLabel(entryLabel(MF->getFunction()));
 }
 
 void SquallAsmPrinter::emitInstruction(const MachineInstr *MI) {
@@ -929,7 +976,9 @@ void SquallAsmPrinter::emitInstruction(const MachineInstr *MI) {
   case Squall::JOIN:
     return emitLaneMarker(*MI);
   default:
-    append(expand(*MI, Scratch));
+    // A volatile load must read memory even when the preceding token happens
+    // to carry the value last stored at that address.
+    append(expand(*MI, Scratch), !MI->hasOrderedMemoryRef());
   }
 }
 
@@ -954,12 +1003,16 @@ Chain SquallAsmPrinter::expand(const MachineInstr &Instr, unsigned Scratch) {
       // of a tag minted for the entry.
       C.extract(Dest::symbol(entryLabel(*F)));
       C.imm(And, TagIPMask);
-    } else {
+    } else if (const auto *G = dyn_cast<GlobalVariable>(Op(1).getGlobal());
+               G && GlobalWords.count(G)) {
       // A byte address: the offset need not be a whole cell.
-      C.imm(Dupr, int64_t(GlobalWords.lookup(
-                      cast<GlobalVariable>(Op(1).getGlobal()))) *
-                          4 +
-                      Op(1).getOffset());
+      C.imm(Dupr, int64_t(GlobalWords.lookup(G)) * 4 + Op(1).getOffset());
+    } else {
+      // Aliases are resolved and other globals rejected before this point;
+      // never let an unplaced global become address 0.
+      error(Twine("'") + Op(1).getGlobal()->getName() +
+            "' has no place in the image");
+      C.imm(Dupr, 0);
     }
     C.store(word(Op(0)));
     break;
@@ -1132,10 +1185,10 @@ Chain SquallAsmPrinter::expand(const MachineInstr &Instr, unsigned Scratch) {
   return C;
 }
 
-void SquallAsmPrinter::append(Chain C) {
+void SquallAsmPrinter::append(Chain C, bool ForwardRead) {
   if (Pending) {
     if (std::optional<unsigned> Word = Pending->storedWord();
-        Word && C.readsFirst(*Word))
+        ForwardRead && Word && C.readsFirst(*Word))
       C.dropFirst();
     flush(C.entry());
   }
@@ -1199,17 +1252,22 @@ void SquallAsmPrinter::emitLaneMarker(const MachineInstr &MI) {
 }
 
 json::Object SquallAsmPrinter::manifest(const Module &M) const {
-  auto TypeName = [](const Type *T) -> StringRef {
+  auto TypeName = [](const Type *T) -> std::string {
     if (T->isVoidTy())
       return "void";
     if (T->isPointerTy())
       return "ptr";
-    return T->getIntegerBitWidth() == 1 ? "i1" : "i32";
+    return "i" + std::to_string(T->getIntegerBitWidth());
   };
-  json::Array ArgumentWords, ArgumentTypes;
+  // A narrow argument arrives in a 32-bit register, and the entry function
+  // relies on its extension attribute: the loader truncates and extends it.
+  json::Array ArgumentWords, ArgumentTypes, ArgumentExtensions;
   for (const Argument &A : Entry->args()) {
     ArgumentWords.push_back(ArgumentWord + A.getArgNo());
     ArgumentTypes.push_back(TypeName(A.getType()));
+    ArgumentExtensions.push_back(A.hasZExtAttr()   ? "zext"
+                                 : A.hasSExtAttr() ? "sext"
+                                                   : "none");
   }
   json::Object Globals;
   for (const GlobalVariable &G : M.globals())
@@ -1221,6 +1279,7 @@ json::Object SquallAsmPrinter::manifest(const Module &M) const {
       {"entry", Entry->getName()},
       {"argument_words", std::move(ArgumentWords)},
       {"argument_types", std::move(ArgumentTypes)},
+      {"argument_extensions", std::move(ArgumentExtensions)},
       {"return_type", TypeName(Entry->getReturnType())},
       {"memory_bytes", MemoryBytes.getValue()},
       {"word_bytes", 8},
@@ -1258,6 +1317,12 @@ json::Object SquallAsmPrinter::manifest(const Module &M) const {
 }
 
 void SquallAsmPrinter::emitEndOfAsmFile(Module &M) {
+  // A module left without code still gets its header, which reports the
+  // missing entry function instead of producing an object with no image.
+  if (!LaidOut) {
+    LaidOut = true;
+    emitImageHeader(M);
+  }
   if (!Entry)
     return;
   OutStreamer->switchSection(imageSection());

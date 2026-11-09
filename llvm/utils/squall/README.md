@@ -94,7 +94,10 @@ Codegen options:
 
 With Clang, pass them through `-mllvm`. Entry arguments are not compile-time
 options: the loader writes them into argument slots, so one object serves every
-input.
+input. An argument narrower than 32 bits may be given in the signed or unsigned
+range of its width; the loader converts it as C does and extends it as the
+entry's `signext`/`zeroext` attribute requires, both recorded in the manifest
+(`argument_types`, `argument_extensions`).
 
 ## How code generation works
 
@@ -224,7 +227,12 @@ span blocks, so loops are not overlapped with each other.
 A guard that fails in a lane still halts with its status; the other lane
 stops at the join. Manifests record `parallel_lanes` and `join_words`, and
 simulators should compare executed tokens as a multiset because cores may
-interleave the lanes differently.
+interleave the lanes differently. The ISA promises only that a token runs
+after its producer and that an instruction's second successor runs before its
+first. Pipelined cores run unordered tokens in either order (Isacomp
+`isa/squall/README.md`, "Scheduling and portability"). Generated code depends
+on nothing more: lanes share no word either one writes, and they meet at a
+matching join. So every core computes the same result and the same memory.
 
 The pass chooses where the join goes. An instruction that combines two groups
 (a merge point) would tie them into one lane, so the pass tries deferring the
@@ -282,9 +290,14 @@ data:    .slot 42
 | `write N` | Store the token value at absolute word `N` |
 | `.slot N` / `.word N` | Constant slot / raw 64-bit word |
 | `.squall_origin N` | Word address assumed for `.text` (default 256) |
+| `halt` | Word 0, the discard destination, unless the file defines `halt` |
 
 Instruction fields use 64-bit word units. Out-of-range fields, bad suffixes,
-and misaligned or out-of-range label references are errors. `examples/assembly_add.sqa`
+and misaligned or out-of-range label references are errors. Alignment padding
+(`.p2align`) is zero words, which are not executable: a word forwards a token
+on one fixed port, so no padding could pass every token on unchanged. Name the
+instruction after padding by a label, not by a relative offset or a secondary
+destination; generated code jumps over padding. `examples/assembly_add.sqa`
 is a small handwritten program. `llvm-mc` output contains only the assembled
 section; complete runnable images come from `llc`/`clang`.
 
@@ -334,6 +347,8 @@ checkout pinned in `squall_tools/rtl.py`.
   `cosh`, and `tanh` for double and the error and gamma functions; other
   floating-point intrinsics without a library function are rejected.
 * Floating point raises no exceptions and does not honor rounding modes.
+* Required tail calls (`musttail`, including `[[clang::musttail]]`) are
+  diagnosed as unsupported; calls use separate activation frames.
 * One image per program, linked from bitcode; there is no object-level linker,
   so finished `clang -c` images cannot be combined.
 * Code runs with one control token unless `-squall-fork-join` is given; lanes

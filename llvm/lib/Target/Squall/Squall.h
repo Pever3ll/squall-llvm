@@ -9,6 +9,7 @@
 #ifndef LLVM_LIB_TARGET_SQUALL_SQUALL_H
 #define LLVM_LIB_TARGET_SQUALL_SQUALL_H
 
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CodeGen.h"
 
 namespace llvm {
@@ -58,6 +59,8 @@ constexpr unsigned MaxSlotWord = 2047;
 constexpr unsigned NumCallJoinWords = 32;
 /// Whether -squall-fork-join is given.
 bool isForkJoinEnabled();
+/// The function started by the image's start token (-squall-entry).
+StringRef entryName();
 
 /// A call to this function, `void __squall_exit(int)`, ends the program with
 /// its argument as the result (the C library's exit and _Exit).

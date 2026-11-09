@@ -17,6 +17,7 @@ class Parser : public MCTargetAsmParser {
   MCAsmParser &P;
   MCInst Inst;
   bool HasInstruction = false;
+  int64_t Origin = 256; // Word address of the start of .text.
   void imm(int64_t X) { Inst.addOperand(MCOperand::createImm(X)); }
   bool end() { return P.parseEOL(); }
   bool integer(int64_t &V) { return P.parseAbsoluteExpression(V); }
@@ -49,6 +50,8 @@ class Parser : public MCTargetAsmParser {
         Dot -= 2;
       if (Dot == StringRef::npos)
         return error("destination must end in .l or .r");
+      if (Dot == 0)
+        return error("expected a label before the destination port");
       Name = Full.take_front(Dot);
       Ports = Full.drop_front(Dot);
       E = MCSymbolRefExpr::create(P.getContext().getOrCreateSymbol(Name),
@@ -111,11 +114,16 @@ class Parser : public MCTargetAsmParser {
 
 public:
   Parser(const MCSubtargetInfo &S, MCAsmParser &P, const MCInstrInfo &I)
-      : MCTargetAsmParser(S, I), P(P) {
-    // Raw .text is conventionally loaded at physical word 256. Image-producing
-    // codegen overrides halt to zero because its section starts at physical 0.
-    auto *H = P.getContext().getOrCreateSymbol("halt");
-    H->setVariableValue(MCConstantExpr::create(-2048, P.getContext()));
+      : MCTargetAsmParser(S, I), P(P) {}
+  /// `halt` names physical word 0, the discard destination. Raw .text is
+  /// conventionally loaded at physical word 256 (see .squall_origin). The name
+  /// is defined at the end of the file, and only when the file does not
+  /// define it: compiled C may have a global or function called `halt`, and
+  /// its generated code discards through `__squall_halt` instead.
+  void onEndOfFile() override {
+    MCSymbol *H = P.getContext().lookupSymbol("halt");
+    if (H && H->isUndefined() && !H->isVariable())
+      H->setVariableValue(MCConstantExpr::create(-Origin * 8, P.getContext()));
   }
   bool parseRegister(MCRegister &, SMLoc &, SMLoc &) override {
     return error("Squall has no registers");
@@ -141,8 +149,7 @@ public:
       }
       if (end())
         return ParseStatus::Failure;
-      P.getContext().getOrCreateSymbol("halt")->setVariableValue(
-          MCConstantExpr::create(-V * 8, P.getContext()));
+      Origin = V;
       return ParseStatus::Success;
     }
     if (N == ".slot") {

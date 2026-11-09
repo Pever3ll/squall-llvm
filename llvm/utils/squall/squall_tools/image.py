@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -23,17 +24,27 @@ def constant_slot(value):
     return 2 << 62 | (value & ((1 << 62) - 1))
 
 
-def canonical(value, kind):
+def canonical(value, kind, extension="none"):
     if kind == "i1":
         if value not in (0, 1):
             raise ValueError(f"i1 argument must be 0 or 1, got {value}")
-        return value
-    if kind == "ptr":
+        bits = 1  # A signext true is -1.
+    elif kind == "ptr":
         if not 0 <= value < 1 << 32:
             raise ValueError(f"pointer argument {value} does not fit 32 bits")
-        return value
-    if not -(1 << 31) <= value < 1 << 32:
-        raise ValueError(f"i32 argument {value} does not fit 32 bits")
+        bits = 32
+    else:
+        bits = int(kind[1:])
+        if not -(1 << bits - 1) <= value < 1 << bits:
+            raise ValueError(f"{kind} argument {value} does not fit {bits} bits")
+    # A narrow argument converts as in C (keep its low bits), and the entry
+    # function relies on the extension its signext/zeroext attribute names.
+    value &= (1 << bits) - 1
+    if extension == "sext" and value >= 1 << bits - 1:
+        value -= 1 << bits
+    # Registers hold 32-bit values sign-extended to the 64-bit slot, pointers
+    # as well as integers, so a high-bit pointer compares equal to the same
+    # constant in code.
     value &= 0xffffffff
     return value - (1 << 32) if value >= 1 << 31 else value
 
@@ -51,12 +62,14 @@ def image_symbols(source, nm=None):
                              str(source)], capture_output=True, text=True,
                             check=True, timeout=60).stdout
     symbols = {}
-    for line in output.splitlines():
-        parts = line.split()
-        if len(parts) == 3 and parts[1].lower() in "tdb":
-            value = int(parts[0], 16)
-            if value % 8 == 0:
-                symbols[parts[2]] = value // 8
+    # "value type name": the name is the rest of the line, and may itself
+    # contain spaces or tabs (LLVM allows any character but a newline). Weak
+    # definitions are W (functions) or V (objects); --defined-only already
+    # leaves out undefined weak references.
+    for line in output.split("\n"):
+        match = re.fullmatch(r"([0-9a-fA-F]+) ([tTdDbBWV]) (.+)", line)
+        if match and int(match[1], 16) % 8 == 0:
+            symbols[match[3]] = int(match[1], 16) // 8
     return symbols
 
 
@@ -81,11 +94,15 @@ def load_image(source, directory, arguments=(), *, objcopy=None, nm=None):
     if len(arguments) != len(kinds):
         raise ValueError(f"entry '{manifest['entry']}' takes {len(kinds)} arguments, "
                          f"got {len(arguments)}")
-    for word, value, kind in zip(manifest["argument_words"], arguments, kinds):
-        data[word * 8:word * 8 + 8] = constant_slot(canonical(value, kind)).to_bytes(8, "little")
+    extensions = manifest.get("argument_extensions", ["none"] * len(kinds))
+    registers = [canonical(v, k, e) for v, k, e in zip(arguments, kinds, extensions)]
+    for word, value in zip(manifest["argument_words"], registers):
+        data[word * 8:word * 8 + 8] = constant_slot(value).to_bytes(8, "little")
     symbols = image_symbols(source, nm)
     entry = manifest["entry"]
-    manifest.update(arguments=[canonical(v, k) for v, k in zip(arguments, kinds)],
+    if entry not in symbols:
+        raise ValueError(f"entry '{entry}' is not among the image's symbols")
+    manifest.update(arguments=registers,
                     symbols=symbols, bootstrap_slots=[],
                     functions={entry: {"entry_word": symbols[entry]}})
     directory.mkdir(parents=True, exist_ok=True)

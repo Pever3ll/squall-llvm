@@ -406,7 +406,18 @@ bool SquallLowerFloat::lower(Instruction &I) {
                  {Product, II->getArgOperand(2)});
       break;
     }
-    case Intrinsic::canonicalize:
+    case Intrinsic::canonicalize: {
+      // Arithmetic quiets a signaling NaN; every other value, subnormals
+      // included, is already canonical in IEEE mode.
+      Value *X = II->getArgOperand(0);
+      Value *Signaling = lowerClassTest(B, X, fcSNan);
+      Value *Raw = Bits(X);
+      APInt Quiet =
+          APInt::getOneBitSet(IT->getBitWidth(), T->isFloatTy() ? 22 : 51);
+      Value *Quieted = B.CreateOr(Raw, ConstantInt::get(IT, Quiet));
+      New = B.CreateBitCast(B.CreateSelect(Signaling, Quieted, Raw), T);
+      break;
+    }
     case Intrinsic::arithmetic_fence:
       New = II->getArgOperand(0);
       break;
@@ -479,9 +490,13 @@ bool SquallLowerFloat::lower(Instruction &I) {
 
 // Runtime functions that LTO kept for code generation, and that nothing
 // calls now, would only take space in the image; so would the internal
-// helpers and variables that only they used.
+// helpers and variables that only they used. The entry function is never
+// called from the image, and may itself be marked used.
 bool SquallLowerFloat::stripUnusedRuntime() {
   bool Changed = false;
+  auto IsEntry = [](const Function &F) {
+    return F.getName() == Squall::entryName();
+  };
   for (bool Progress = true; Progress;) {
     Progress = false;
     SmallVector<GlobalValue *, 32> Kept;
@@ -489,7 +504,7 @@ bool SquallLowerFloat::stripUnusedRuntime() {
     SmallPtrSet<Constant *, 32> Unused;
     for (GlobalValue *GV : Kept)
       if (auto *F = dyn_cast<Function>(GV);
-          F && !F->isDeclaration() && F->hasOneUse())
+          F && !F->isDeclaration() && F->hasOneUse() && !IsEntry(*F))
         Unused.insert(F); // Only llvm.compiler.used refers to it.
     if (!Unused.empty())
       removeFromUsedLists(*M, [&](Constant *C) {
@@ -497,7 +512,7 @@ bool SquallLowerFloat::stripUnusedRuntime() {
       });
     for (Function &F : make_early_inc_range(*M)) {
       F.removeDeadConstantUsers();
-      if (F.use_empty() && !F.isDeclaration() &&
+      if (F.use_empty() && !F.isDeclaration() && !IsEntry(F) &&
           (F.hasLocalLinkage() || Unused.contains(&F))) {
         F.eraseFromParent();
         Progress = Changed = true;
@@ -526,13 +541,20 @@ bool SquallLowerFloat::runOnModule(Module &Mod) {
       Changed |= lower(*I);
   }
   // compiler-rt defines some builtins as aliases (__eqsf2 of __lesf2, for
-  // example), which the calls above may name. A Squall image has no symbols,
-  // so calls go to the aliasee.
-  for (GlobalAlias &A : make_early_inc_range(Mod.aliases()))
-    if (auto *F = dyn_cast<Function>(A.getAliasee()->stripPointerCasts())) {
-      A.replaceAllUsesWith(F);
-      A.eraseFromParent();
-      Changed = true;
+  // example), which the calls above may name, and C programs may alias
+  // variables. A Squall image has no symbols, so every use refers to the
+  // aliasee: a function, or a variable plus a constant offset. The entry
+  // function is found by name, so an alias that names it gives its name and
+  // export to the function it aliases, through any chain of aliases.
+  for (GlobalAlias &A : make_early_inc_range(Mod.aliases())) {
+    if (auto *F = dyn_cast_or_null<Function>(A.getAliaseeObject());
+        F && A.getName() == Squall::entryName()) {
+      F->takeName(&A);
+      F->setLinkage(GlobalValue::ExternalLinkage);
     }
+    A.replaceAllUsesWith(A.getAliasee());
+    A.eraseFromParent();
+    Changed = true;
+  }
   return stripUnusedRuntime() | Changed;
 }

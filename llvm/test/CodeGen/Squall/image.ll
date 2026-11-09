@@ -27,8 +27,9 @@
 ; CHECK-NEXT: dupr.c (1).l [3]
 ; CHECK-NEXT: dupr.r (1).r 9
 ; CHECK-NEXT: dupr.c (1).l [4]
-; CHECK-NEXT: dupl .Lsquall.entry.main.l #0
+; CHECK-NEXT: dupl [[ENTRY:.Lsquall_entry[0-9]+]].l #0
 ; CHECK:      main:
+; CHECK-NEXT: [[ENTRY]]:
 ; CHECK:      .org 131072, 0
 ; CHECK-NEXT: .quad -9223372036854775552
 ; CHECK-NEXT: .rept 47101
@@ -37,6 +38,8 @@
 ; CHECK:      .org 524272, 0
 ; CHECK:      .section .squall.config
 ; CHECK:      \"abi\":\"squall-frame-slots-1\"
+; CHECK-SAME: \"argument_extensions\":[\"none\",\"none\"]
+; CHECK-SAME: \"argument_types\":[\"i32\",\"i32\"]
 ; CHECK-SAME: \"argument_words\":[8,9]
 ; CHECK-SAME: \"globals\":{\"g\":16}
 

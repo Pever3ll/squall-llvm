@@ -294,6 +294,58 @@ int main(int i) {{
     assert result["status"] == 1 and result["result"] == 43, result
 
 
+@pytest.mark.parametrize("level", ["-O1", "-O2"])
+def test_aligned_loops_run(tmp_path, level):
+    """-falign-loops pads before loop headers that code falls through into.
+    It is a code generation option, so it applies with -c, not at the link."""
+    source = tmp_path / "loops.c"
+    source.write_text("""int data[16];
+int main(int n) {
+  int s = 0;
+  for (int i = 0; i < n; i++) data[i & 15] = i;
+  for (int j = 0; j < n; j++) {
+    int k = data[j & 15];
+    while (k > 0) { s += k; k -= 3; }
+  }
+  return s;
+}
+""")
+    if not clang():
+        pytest.skip("the built Squall Clang is required")
+    image = tmp_path / "loops.o"
+    subprocess.run([clang(), "--target=squallv2", "-c", level, "-falign-loops=256", "-Wno-main",
+                    str(source), "-o", str(image)], check=True, capture_output=True, text=True)
+    load(image, tmp_path / "loops", [10])
+    result = run_image(tmp_path / "loops")
+    assert result["status"] == 1 and result["result"] == 72, result
+
+
+@requires_runtime
+@pytest.mark.parametrize("level", ["-O0", "-O2"])
+def test_aliased_main(tmp_path, level):
+    """An alias of main names the entry function after aliases are resolved."""
+    source = tmp_path / "alias.c"
+    source.write_text('int real_main(void) { return 42; }\n'
+                      'int main(void) __attribute__((alias("real_main")));\n')
+    image = link(tmp_path, [source], "main", level)
+    load(image, tmp_path / "alias")
+    result = run_image(tmp_path / "alias")
+    assert result["status"] == 1 and result["result"] == 42, result
+
+
+@requires_runtime
+@pytest.mark.parametrize("level", ["-O0", "-O2"])
+def test_used_main(tmp_path, level):
+    """`used` puts main in llvm.compiler.used, where the runtime's unused
+    functions are stripped; the entry must stay."""
+    source = tmp_path / "used.c"
+    source.write_text("__attribute__((used)) int main(void) { return 42; }\n")
+    image = link(tmp_path, [source], "main", level)
+    load(image, tmp_path / "used")
+    result = run_image(tmp_path / "used")
+    assert result["status"] == 1 and result["result"] == 42, result
+
+
 @requires_runtime
 @pytest.mark.parametrize("level", ["-O0", "-O2"])
 def test_failed_assertion_traps(tmp_path, level):

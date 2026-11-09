@@ -9,3 +9,7 @@ send.r (1).l.r [0]
 ; CHECK: error: send/extract cannot have a secondary ALU destination
 .slot 2305843009213693952
 ; CHECK: error: constant slot payload must fit signed 62 bits
+dupl .l #0
+; CHECK: error: expected a label before the destination port
+dupl .l.r #0
+; CHECK: error: expected a label before the destination port
