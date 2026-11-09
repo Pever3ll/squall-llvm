@@ -7,6 +7,7 @@
 #include "llvm/MC/MCSection.h"
 #include "llvm/MC/MCValue.h"
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/EndianStream.h"
 #include "llvm/Support/MathExtras.h"
 using namespace llvm;
 namespace {
@@ -22,8 +23,8 @@ public:
       return ELF::R_SQUALL_BRANCH20;
     case Squall::Target20:
       return ELF::R_SQUALL_TARGET20;
-    case Squall::Code11:
-      return ELF::R_SQUALL_CODE11;
+    case Squall::Code12:
+      return ELF::R_SQUALL_CODE12;
     case FK_Data_4:
       return ELF::R_SQUALL_32;
     case FK_Data_8:
@@ -42,8 +43,8 @@ public:
   }
   MCFixupKindInfo getFixupKindInfo(MCFixupKind K) const override {
     static const MCFixupKindInfo Info[] = {{"fixup_squall_dest20", 43, 20, 0},
-                                           {"fixup_squall_target20", 2, 20, 0},
-                                           {"fixup_squall_code11", 28, 11, 0}};
+                                           {"fixup_squall_target20", 10, 20, 0},
+                                           {"fixup_squall_code12", 26, 12, 0}};
     return K < FirstTargetFixupKind ? MCAsmBackend::getFixupKindInfo(K)
                                     : Info[K - FirstTargetFixupKind];
   }
@@ -76,7 +77,16 @@ public:
                     const MCSubtargetInfo *) const override {
     if (Count % 8)
       return false;
-    O.write_zeros(Count);
+    // Padding is never executed: no single word can pass on a token arriving
+    // on either port unchanged, so code generation jumps over it. A token
+    // that reaches padding by mistake is discarded: each word is `write 0
+    // 0x00`, a Write with an empty byte mask and no acknowledgement, which
+    // stores nothing and forms no token. The program then drains without a
+    // status. (A zero word would be `nop (0).l #0`, which sends the token to
+    // itself forever: on hardware, a hang with nothing to observe.)
+    for (uint64_t I = 0; I < Count; I += 8)
+      support::endian::write<uint64_t>(O, Squall::PaddingWord,
+                                       llvm::endianness::little);
     return true;
   }
 };

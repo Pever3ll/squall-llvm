@@ -1,5 +1,7 @@
-/* Squall C library: general utilities. There is no heap, environment, or
-   process control; abort() halts the program with the trap status. */
+/* Squall C library: general utilities. There is no heap or environment.
+   exit(status) ends the program with status as its result, as if the entry
+   function returned it; there are no atexit handlers or streams to flush.
+   abort() halts the program with the trap status. */
 #ifndef SQUALL_STDLIB_H
 #define SQUALL_STDLIB_H
 
@@ -20,6 +22,8 @@ typedef struct {
 } lldiv_t;
 
 #define RAND_MAX 0x7fffffff
+#define EXIT_SUCCESS 0
+#define EXIT_FAILURE 1
 
 int abs(int x);
 long labs(long x);
@@ -46,6 +50,8 @@ int rand(void);
 void srand(unsigned seed);
 
 _Noreturn void abort(void);
+_Noreturn void exit(int status);
+_Noreturn void _Exit(int status);
 
 #ifdef __cplusplus
 }

@@ -1,4 +1,10 @@
-"""Build and run the pinned upstream Zig interpreter on compiler output."""
+"""Build and run the pinned upstream Zig interpreter on compiler output.
+
+The interpreter is upstream's at REFERENCE_COMMIT with one recorded patch,
+`reference-rebase-rtl.patch`, for the two places where the hardware target
+(Isacomp squall-v2-rebase) differs from it: the tag layout (ip 28:0, fp 60:32,
+port 61) and zero-extended slot reads. Everything else is upstream's.
+"""
 from __future__ import annotations
 
 import argparse
@@ -12,7 +18,8 @@ import subprocess
 import sys
 
 REFERENCE_URL = "https://github.com/Lyssia-Seiden/squall-v2-reference-impl.git"
-REFERENCE_COMMIT = "03dcc01ffd68abe5cf6169bd2af6090e0f398077"
+REFERENCE_COMMIT = "5882fe547566002180eb6d1fbe9c9695a36bb517"
+REFERENCE_PATCH = Path(__file__).with_name("reference-rebase-rtl.patch")
 
 
 def checked(command, **kwargs):
@@ -60,21 +67,30 @@ def build_reference(directory=None, cache=None):
     if version != "0.16.0":
         raise RuntimeError(f"reference runner requires Zig 0.16.0; found {version}")
     driver = Path(__file__).with_name("reference_driver.zig")
+    patch = REFERENCE_PATCH.read_bytes()
     fingerprint = hashlib.sha256(driver.read_bytes() + version.encode() + REFERENCE_COMMIT.encode()
-                                 + platform.platform().encode()).hexdigest()[:16]
+                                 + patch + platform.platform().encode()).hexdigest()[:16]
     cache = Path(cache or Path.home() / ".cache/squall-tools/runners") / fingerprint
     binary = cache / ("squall-reference.exe" if os.name == "nt" else "squall-reference")
     if not binary.exists():
-        cache.mkdir(parents=True, exist_ok=True)
+        source = cache / "src"
+        if source.exists():
+            shutil.rmtree(source)
+        source.mkdir(parents=True)
+        for name in ("root.zig", "assembler.zig"):
+            shutil.copyfile(directory / "src" / name, source / name)
+        # cache is not a git work tree, so `git apply` acts on the copy alone.
+        checked(["git", "apply", "--check", str(REFERENCE_PATCH)], cwd=cache)
+        checked(["git", "apply", str(REFERENCE_PATCH)], cwd=cache)
         checked([zig, "build-exe", "-lc", "-O", "ReleaseSafe", "--dep", "squall",
-                 f"-Mroot={driver}", f"-Msquall={directory / 'src/root.zig'}", f"-femit-bin={binary}"], timeout=120)
+                 f"-Mroot={driver}", f"-Msquall={source / 'root.zig'}", f"-femit-bin={binary}"], timeout=120)
     return binary
 
 
 def run_image(directory, *, reference=None, cache=None, trace=False):
     directory = Path(directory).resolve()
     manifest = json.loads((directory / "manifest.json").read_text())
-    if manifest.get("format") != "squall-v2-image-1":
+    if manifest.get("format") != "squall-v2-image-2":
         raise RuntimeError("unsupported image manifest format")
     command = [str(build_reference(reference, cache)), str(directory / "memory.bin"),
                str(manifest["stack_base"]), str(manifest["stack_top"]), str(manifest["max_cycles"]),
@@ -104,7 +120,12 @@ def main(argv=None):
         result = run_image(args.image, reference=args.reference_dir, trace=args.trace)
         print(json.dumps(result, sort_keys=True))
         if not result["quiescent"] or result["status"] != 1:
-            print("Squall execution did not complete successfully", file=sys.stderr)
+            reason = {0: "no status was written: the last token was discarded (a send to word 0, "
+                         "padding, or a store that parked on an empty word)",
+                      2: "call depth exceeded the frame arena", 3: "invalid memory address",
+                      4: "trap (abort, failed assert, or a null function pointer)"}
+            why = reason.get(result["status"], "") if result["quiescent"] else "tokens remain after max_cycles"
+            print(f"Squall execution did not complete successfully: {why}", file=sys.stderr)
             return 1
         if args.expect is not None and result["result"] != args.expect:
             print(f"expected {args.expect}, got {result['result']}", file=sys.stderr)

@@ -1,0 +1,65 @@
+diff --git a/src/root.zig b/src/root.zig
+index 785eaf8..3f0edef 100644
+--- a/src/root.zig
++++ b/src/root.zig
+@@ -46,13 +46,15 @@ test "sqptr align" {
+     }
+ }
+ 
+-/// Small enough to fit in the non-pb part of a word
+-pub const Tag = packed struct(u62) {
++/// Isacomp squall-v2-rebase layout: ip 28:0, fp 60:32, port 61. Bits 62-63
++/// are zero, so a tag still fits the non-pb part of a word.
++pub const Tag = packed struct(u64) {
+     // 2^3 == 8 byte == word aligned
+     ip: AlignedSqPtr(3),
++    pad: u3 = 0,
+     fp: AlignedSqPtr(3),
+     port: Port,
+-    pad: u3 = 0,
++    pad_tail: u2 = 0,
+ 
+     pub fn init(ip: AlignedSqPtr(3), fp: AlignedSqPtr(3), port: Port) Tag {
+         return .{ .ip = ip, .fp = fp, .port = port };
+@@ -77,7 +79,6 @@ pub fn signExtend(val: anytype) Word {
+ }
+ 
+ pub const Token = packed struct(u128) {
+-    pad: u2 = 0,
+     tag: Tag,
+     acc: Word,
+ };
+@@ -245,7 +246,7 @@ fn clock_token(state: *State, token: Token) void {
+                     const minted = token.tag.offsetWith(data.payload.extract.d2);
+                     state.push(.{
+                         .tag = token.tag.offsetWith(data.d),
+-                        .acc = @as(EffWord, @bitCast(minted)),
++                        .acc = @as(Word, @bitCast(minted)),
+                     });
+                 },
+             }
+@@ -292,7 +293,8 @@ fn clock_token(state: *State, token: Token) void {
+                 }
+             }
+ 
+-            const other_acc: Word = signExtend(other.val);
++            // Isacomp squall-v2-rebase zero-extends the 62-bit payload.
++            const other_acc: Word = other.val;
+             const maybe_l, const maybe_r = apply_alu(
+                 switch (data.forming_rule_tag) {
+                     .Arith => data.forming_rule_payload.arith.alu_op,
+@@ -323,11 +325,10 @@ fn clock_token(state: *State, token: Token) void {
+                     // both should always exist
+                     if (maybe_l) |tag| {
+                         if (maybe_r) |v| {
++                            // The RTL reads only the tag's fields.
++                            const t: Tag = @bitCast(tag);
+                             state.push(.{
+-                                .tag = @bitCast(@as(
+-                                    @typeInfo(Tag).@"struct".backing_integer orelse unreachable,
+-                                    @truncate(tag),
+-                                )),
++                                .tag = Tag.init(t.ip, t.fp, t.port),
+                                 .acc = v,
+                             });
+                             state.push(.{

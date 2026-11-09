@@ -44,8 +44,8 @@ define i32 @main(i32 %a, i32 %b) {
 
 ; A call may run in one lane when the callee cannot reach the caller again;
 ; the region joins on reserved call join word 1 (absolute word 16), not the
-; shared word 7. A recursive call stays outside the lanes. Frame objects are
-; static slots, so stores to two of them may be in different lanes.
+; shared word 7. A recursive call stays outside the lanes. Volatile frame
+; accesses are boundaries even when the frame objects cannot alias.
 ; MIR-LABEL: name: calls
 ; MIR:       FORK [[ID:[0-9]+]]
 ; MIR-NEXT:  {{\$s[0-9]+}} = CALLR @leaf, $s0
@@ -55,11 +55,12 @@ define i32 @main(i32 %a, i32 %b) {
 ; MIR-NOT:   FORK
 ; MIR:       CALLR @recursive
 ; MIR-LABEL: name: frames
-; MIR:       FORK [[FID:[0-9]+]]
+; MIR-NOT:   FORK
 ; MIR:       STF {{.*}} :: (volatile store (s32) into %ir.x)
-; MIR:       LANE [[FID]]
+; MIR:       LDF {{.*}} :: (volatile dereferenceable load (s32) from %ir.x)
+; MIR-NOT:   FORK
 ; MIR:       STF {{.*}} :: (store (s32) into %ir.y)
-; MIR:       JOIN [[FID]], 0
+; MIR-NOT:   FORK
 ; CHECK-LABEL: calls:
 ; CHECK:       .Lsquall_join{{[0-9]+}}:
 ; CHECK-NEXT:  dupl (1).{{[lr]}} 16

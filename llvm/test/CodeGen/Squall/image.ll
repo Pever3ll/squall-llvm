@@ -27,18 +27,32 @@
 ; CHECK-NEXT: dupr.c (1).l [3]
 ; CHECK-NEXT: dupr.r (1).r 9
 ; CHECK-NEXT: dupr.c (1).l [4]
-; CHECK-NEXT: dupl .Lsquall.entry.main.l #0
+; CHECK-NEXT: dupl [[ENTRY:.Lsquall_entry[0-9]+]].l #0
 ; CHECK:      main:
+; CHECK-NEXT: [[ENTRY]]:
 ; CHECK:      .org 131072, 0
 ; CHECK-NEXT: .quad -9223372036854775552
 ; CHECK-NEXT: .rept 47101
 ; CHECK-NEXT: .quad -9223372036854775808
 ; CHECK-NEXT: .endr
+; The start token: ip 263 (__squall_start) in bits 28:0, the root frame
+; 16384 in bits 60:32, the left port in bit 61.
 ; CHECK:      .org 524272, 0
+; CHECK-NEXT: .quad 70368744177927
+; CHECK-NEXT: .quad 0
 ; CHECK:      .section .squall.config
-; CHECK:      \"abi\":\"squall-frame-slots-1\"
+; CHECK:      \"abi\":\"squall-frame-slots-2\"
+; CHECK-SAME: \"argument_extensions\":[\"none\",\"none\"]
+; CHECK-SAME: \"argument_types\":[\"i32\",\"i32\"]
 ; CHECK-SAME: \"argument_words\":[8,9]
+; CHECK-SAME: \"compiler\":\"LLVM {{[0-9.]+}}
+; CHECK-SAME: \"frame_arena_end_word\":63486
+; CHECK-SAME: \"frame_arena_fill\":\"0x8000000000000000\"
 ; CHECK-SAME: \"globals\":{\"g\":16}
+; The Isacomp commit whose RTL the encoding is that of, and the reset values
+; of the core's stack pointer registers.
+; CHECK-SAME: \"isa\":{\"branch\":\"squall-v2-rebase\",\"commit\":\"a21ccd67752c7b8bd9523818aa77b972f13ddb16\",\"repository\":\"isacomp\"}
+; CHECK-SAME: \"reset\":{\"stack_base\":524272,\"stack_top\":524256}
 
 ; OBJ:      Format: elf32-squall
 ; OBJ:      Name: .squall.image

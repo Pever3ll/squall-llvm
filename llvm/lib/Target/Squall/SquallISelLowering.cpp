@@ -7,11 +7,12 @@
 //===----------------------------------------------------------------------===//
 //
 // Values are i32; wider integers are legalized into i32 pieces. Booleans are
-// 0/1 in an i32 register. Squall's arithmetic is 64-bit, so the AsmPrinter
-// keeps every register sign-extended from 32 bits.
+// 0/1 in an i32 register. Squall's arithmetic is 64-bit and a slot read
+// zero-extends its 62-bit payload, so the AsmPrinter keeps every register
+// zero-extended from 32 bits.
 //
 // Memory is byte-addressed in four-byte little-endian cells, one per 64-bit
-// slot. A cell holds its 32-bit value sign-extended, so i32 and pointer
+// slot. A cell holds its 32-bit value zero-extended, so i32 and pointer
 // accesses are single slot accesses. Narrower accesses load the cell and
 // extract the bytes; narrower stores rewrite the cell. Expanded code runs with
 // one control token, so the read-modify-write cannot race.
@@ -135,6 +136,20 @@ SDValue SquallTargetLowering::LowerOperation(SDValue Op,
     const Value *List = cast<SrcValueSDNode>(Op.getOperand(2))->getValue();
     return DAG.getStore(Op.getOperand(0), DL, Address, Op.getOperand(1),
                         MachinePointerInfo(List));
+  }
+  // Legalization treats these as custom even though they are never set so.
+  // The IR checker rejects their intrinsics; report rather than crash if
+  // one arrives another way.
+  case ISD::FRAMEADDR:
+  case ISD::RETURNADDR:
+  case ISD::ADDROFRETURNADDR:
+  case ISD::SPONENTRY: {
+    SDLoc DL(Op);
+    unsupported(DAG, DL, "return and frame addresses are not available");
+    SDValue Zero = DAG.getConstant(0, DL, Op.getValueType());
+    if (Op->getNumValues() == 1)
+      return Zero;
+    return DAG.getMergeValues({Zero, Op.getOperand(0)}, DL);
   }
   default:
     llvm_unreachable("unexpected custom lowering");
@@ -340,6 +355,12 @@ SquallTargetLowering::LowerCall(CallLoweringInfo &CLI,
   const Function *Callee = nullptr;
   if (auto *G = dyn_cast<GlobalAddressSDNode>(CLI.Callee))
     Callee = dyn_cast<Function>(G->getGlobal());
+  // The C library's exit() ends the program from any depth: the value goes
+  // to the host return stub, as if the entry function returned it.
+  if (Callee && Callee->getName() == Squall::ExitFunction &&
+      CLI.OutVals.size() == 1)
+    return DAG.getNode(SquallISD::EXIT, DL, MVT::Other, CLI.Chain,
+                       CLI.OutVals[0]);
   std::string Undefined;
   // Calls that code generation introduces (libcalls) name their target; the
   // runtime library linked into the program defines it.

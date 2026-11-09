@@ -124,23 +124,51 @@ bool SquallLowerAlloca::runOnModule(Module &M) {
         continue;
       }
       auto *A = cast<AllocaInst>(I);
-      // Size in bytes, rounded up to whole cells.
+      // Scalable vectors have no fixed size; SquallCheckIR reports them.
+      if (A->getAllocatedType()->isScalableTy())
+        continue;
       uint64_t Element = DL.getTypeAllocSize(A->getAllocatedType());
-      Value *Count = B.CreateZExtOrTrunc(A->getArraySize(), I32);
-      Value *Size = B.CreateMul(Count, ConstantInt::get(I32, Element));
-      Size = B.CreateAnd(B.CreateAdd(Size, ConstantInt::get(I32, 3)),
-                         ConstantInt::get(I32, ~3u));
-      uint64_t Alignment = std::max<uint64_t>(A->getAlign().value(), 4);
+      // No start in the area, which lies below 2^31, is aligned to 2^31 or
+      // more. Clamping larger alignments (up to IR's 2^32) to 2^31 keeps the
+      // masks in i32, and the aligned start still lands past the area: trap.
+      uint64_t Alignment =
+          std::clamp<uint64_t>(A->getAlign().value(), 4, UINT64_C(1) << 31);
       Value *Current = B.CreatePtrToInt(B.CreateLoad(Ptr, Top), I32);
       Value *Start = B.CreateAnd(
           B.CreateAdd(Current, ConstantInt::get(I32, Alignment - 1)),
           ConstantInt::getSigned(I32, -int64_t(Alignment)));
+      // The request must fit in the room left after aligning the start,
+      // which is checked before any arithmetic on the element count can
+      // wrap: the count at full width against room / element size. The
+      // start and the area's end are whole cells, so a request that fits
+      // still fits rounded up to a cell.
+      Value *EndWord = B.CreatePtrToInt(End, I32);
+      Value *Exhausted = B.CreateICmpUGT(Start, EndWord);
+      bool WideElement = Element > UINT32_MAX;
+      if (WideElement) {
+        // No nonzero count can fit, but a zero count is still valid. Avoid
+        // narrowing the element size to i32 (which would assert or wrap).
+        Value *Nonzero = B.CreateIsNotNull(A->getArraySize());
+        Exhausted = B.CreateOr(Exhausted, Nonzero);
+      } else if (Element) {
+        Value *Room = B.CreateSub(EndWord, Start);
+        Value *Capacity = B.CreateUDiv(Room, ConstantInt::get(I32, Element));
+        unsigned Width =
+            std::max(64u, A->getArraySize()->getType()->getIntegerBitWidth());
+        Type *Wide = IntegerType::get(C, Width);
+        Value *Count = B.CreateZExtOrTrunc(A->getArraySize(), Wide);
+        Value *TooMany = B.CreateICmpUGT(Count, B.CreateZExt(Capacity, Wide));
+        Exhausted = B.CreateOr(Exhausted, TooMany);
+      }
+      // Size in bytes, rounded up to whole cells; exact when it fits.
+      Value *Count = B.CreateZExtOrTrunc(A->getArraySize(), I32);
+      Value *Size = WideElement
+                        ? B.getInt32(0)
+                        : B.CreateMul(Count, ConstantInt::get(I32, Element));
+      Size = B.CreateAnd(B.CreateAdd(Size, ConstantInt::get(I32, 3)),
+                         ConstantInt::get(I32, ~3u));
       Value *Next = B.CreateAdd(Start, Size);
-      // Exhausted, or the size wrapped around.
-      Value *Exhausted = B.CreateICmpUGT(Next, B.CreatePtrToInt(End, I32));
-      Value *Wrapped = B.CreateICmpULT(Next, Start);
-      Value *Overflow = B.CreateOr(Exhausted, Wrapped);
-      Instruction *Fail = SplitBlockAndInsertIfThen(Overflow, A, true);
+      Instruction *Fail = SplitBlockAndInsertIfThen(Exhausted, A, true);
       IRBuilder<>(Fail).CreateCall(Trap);
       B.SetInsertPoint(A);
       B.CreateStore(B.CreateIntToPtr(Next, Ptr), Top);

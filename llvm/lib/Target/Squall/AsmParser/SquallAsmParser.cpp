@@ -17,6 +17,7 @@ class Parser : public MCTargetAsmParser {
   MCAsmParser &P;
   MCInst Inst;
   bool HasInstruction = false;
+  int64_t Origin = 256; // Word address of the start of .text.
   void imm(int64_t X) { Inst.addOperand(MCOperand::createImm(X)); }
   bool end() { return P.parseEOL(); }
   bool integer(int64_t &V) { return P.parseAbsoluteExpression(V); }
@@ -40,11 +41,17 @@ class Parser : public MCTargetAsmParser {
       if (P.getTok().isNot(AsmToken::Identifier))
         return error("expected instruction label or parenthesized word offset");
       StringRef Full = P.getTok().getString();
+      // The ports are the final ".l"/".r", preceded by a secondary ".l"/".r"
+      // only when that component is a port: "loop.x.l" is label "loop.x".
+      // "a.l.r" reads as label "a" with ports ".l.r", not label "a.l".
       size_t Dot = Full.rfind('.');
-      if (Dot != StringRef::npos && Dot >= 2 && Full[Dot - 2] == '.')
+      if (Dot != StringRef::npos && Dot >= 2 && Full[Dot - 2] == '.' &&
+          (Full[Dot - 1] == 'l' || Full[Dot - 1] == 'r'))
         Dot -= 2;
       if (Dot == StringRef::npos)
         return error("destination must end in .l or .r");
+      if (Dot == 0)
+        return error("expected a label before the destination port");
       Name = Full.take_front(Dot);
       Ports = Full.drop_front(Dot);
       E = MCSymbolRefExpr::create(P.getContext().getOrCreateSymbol(Name),
@@ -107,11 +114,16 @@ class Parser : public MCTargetAsmParser {
 
 public:
   Parser(const MCSubtargetInfo &S, MCAsmParser &P, const MCInstrInfo &I)
-      : MCTargetAsmParser(S, I), P(P) {
-    // Raw .text is conventionally loaded at physical word 256. Image-producing
-    // codegen overrides halt to zero because its section starts at physical 0.
-    auto *H = P.getContext().getOrCreateSymbol("halt");
-    H->setVariableValue(MCConstantExpr::create(-2048, P.getContext()));
+      : MCTargetAsmParser(S, I), P(P) {}
+  /// `halt` names physical word 0, the discard destination. Raw .text is
+  /// conventionally loaded at physical word 256 (see .squall_origin). The name
+  /// is defined at the end of the file, and only when the file does not
+  /// define it: compiled C may have a global or function called `halt`, and
+  /// its generated code discards through `__squall_halt` instead.
+  void onEndOfFile() override {
+    MCSymbol *H = P.getContext().lookupSymbol("halt");
+    if (H && H->isUndefined() && !H->isVariable())
+      H->setVariableValue(MCConstantExpr::create(-Origin * 8, P.getContext()));
   }
   bool parseRegister(MCRegister &, SMLoc &, SMLoc &) override {
     return error("Squall has no registers");
@@ -137,16 +149,17 @@ public:
       }
       if (end())
         return ParseStatus::Failure;
-      P.getContext().getOrCreateSymbol("halt")->setVariableValue(
-          MCConstantExpr::create(-V * 8, P.getContext()));
+      Origin = V;
       return ParseStatus::Success;
     }
     if (N == ".slot") {
-      if (!isInt<62>(V)) {
-        error("constant slot payload must fit signed 62 bits");
+      // A slot read zero-extends its 62-bit payload, so a negative value
+      // would not read back as itself.
+      if (!isUInt<62>(V)) {
+        error("constant slot payload must fit unsigned 62 bits");
         return ParseStatus::Failure;
       }
-      V = (uint64_t(V) & ((UINT64_C(1) << 62) - 1)) | (UINT64_C(2) << 62);
+      V = uint64_t(V) | (UINT64_C(2) << 62);
     }
     if (end())
       return ParseStatus::Failure;
@@ -159,6 +172,56 @@ public:
     Inst.clear();
     Inst.setLoc(L);
     auto Parts = Name.split('.');
+    if (Parts.first == "write") {
+      // write[.a ack-dest] word [byte-mask]
+      if (!Parts.second.empty() && Parts.second != "a")
+        return error("write suffix must be .a");
+      bool Ack = Parts.second == "a";
+      Inst.setOpcode(Squall::WRITE);
+      MCInst Dest;
+      if (Ack) {
+        int Second;
+        if (destination(Second))
+          return true;
+        if (Second >= 0)
+          return error("write acknowledgement cannot have a secondary port");
+        Dest = Inst; // The destination operands, parsed first.
+        Inst.clear();
+        Inst.setOpcode(Squall::WRITE);
+        Inst.setLoc(L);
+      }
+      int64_t V, Mask = 0xff;
+      if (integer(V))
+        return true;
+      imm(V);
+      if (P.getTok().isNot(AsmToken::EndOfStatement) && integer(Mask))
+        return true;
+      imm(Mask);
+      if (Ack) {
+        Inst.addOperand(Dest.getOperand(0));
+        Inst.addOperand(Dest.getOperand(1));
+      } else {
+        imm(0);
+        imm(0);
+      }
+      imm(Ack);
+      return end();
+    }
+    if (Parts.first == "extract") {
+      if (!Parts.second.empty())
+        return error("extract matches no slot and takes no matching suffix");
+      Inst.setOpcode(Squall::EXTRACT);
+      int Second, Other;
+      if (destination(Second))
+        return true;
+      if (Second >= 0)
+        return error("send/extract cannot have a secondary ALU destination");
+      if (destination(Other))
+        return true;
+      if (Other >= 0)
+        return error("extract target cannot have a secondary port");
+      return end();
+    }
     int Rule = 0;
     if (!Parts.second.empty()) {
       if (Parts.second != "r" && Parts.second != "c")
@@ -166,33 +229,18 @@ public:
       Rule = Parts.second == "r" ? 2 : 1;
     }
     int Op = Squall::aluCode(Parts.first);
-    if (Name == "write") {
-      Inst.setOpcode(Squall::WRITE);
-      int64_t V;
-      if (integer(V))
-        return true;
-      imm(V);
-      return end();
-    }
-    bool Send = Parts.first == "send", Extract = Parts.first == "extract";
-    if (Op < 0 && !Send && !Extract)
+    bool Send = Parts.first == "send";
+    if (Op < 0 && !Send)
       return error("unknown Squall instruction");
     if (Op >= 0)
       imm(Op);
     int Second;
     if (destination(Second))
       return true;
-    if (Send || Extract) {
+    if (Send) {
       if (Second >= 0)
         return error("send/extract cannot have a secondary ALU destination");
-      Inst.setOpcode(Send ? Squall::SEND : Squall::EXTRACT);
-      if (Extract) {
-        int Other;
-        if (destination(Other))
-          return true;
-        if (Other >= 0)
-          return error("extract target cannot have a secondary port");
-      }
+      Inst.setOpcode(Squall::SEND);
     } else
       imm(Second);
     if (P.getTok().is(AsmToken::Hash)) {

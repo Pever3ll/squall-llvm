@@ -21,6 +21,7 @@ LIBC = {
     "strings": [(0,), (1,), (5,), (26,), (39,), (-17,)],
     "search": [(i,) for i in range(6)],
     "parse": [(i,) for i in range(12)],
+    "unsigned_limits": [(i,) for i in range(6)],
     "sorting": [(0,), (1,), (12345,), (-99,)],
     "classes": [(c,) for c in (0, 9, 10, 32, 48, 57, 65, 70, 90, 95, 97, 102, 122, 126, 127)],
     "arithmetic": [(0,), (1,), (-7,), (100,), (-123457,)],
@@ -121,6 +122,231 @@ def test_exhausted_alloca_area_traps(tmp_path, level):
 
 
 @requires_runtime
+@pytest.mark.parametrize("text,value,overflow", [
+    ("-4294967296", 0xFFFFFFFF, True), ("-99999999999", 0xFFFFFFFF, True),
+    ("4294967296", 0xFFFFFFFF, True), ("-4294967295", 1, False), ("-1", 0xFFFFFFFF, False),
+])
+def test_strtoul_saturates_on_overflow(tmp_path, text, value, overflow):
+    """long is 32 bits on Squall (64 on most hosts), so strtoul is checked
+    against fixed values rather than the host."""
+    source = tmp_path / "strtoul.c"
+    source.write_text(f"""#include <errno.h>
+#include <stdlib.h>
+int main(void) {{
+  errno = 0;
+  unsigned long v = strtoul("{text}", 0, 10);
+  return (v == {value}u) + 2 * (errno == ERANGE);
+}}
+""")
+    image = link(tmp_path, [source], "main", "-O0")
+    load(image, tmp_path / "run")
+    result = run_image(tmp_path / "run")
+    assert result["status"] == 1 and result["result"] == 1 + 2 * overflow, result
+
+
+MATH_INPUTS = [0, 1, -1, 7, -13, 64, -200, 511, 1700, -2999, 1000, 1001, 1002, 1003]
+
+
+def ulps_apart(a, b, width):
+    """Distance in ulps between two IEEE encodings; NaNs of any payload are
+    equal, and only the same infinity or zero matches."""
+    import math
+    import struct
+    fmt, ints = ("<d", "<Q") if width == 64 else ("<f", "<I")
+    x, y = (struct.unpack(fmt, struct.pack(ints, v & ((1 << width) - 1)))[0] for v in (a, b))
+    if math.isnan(x) or math.isnan(y):
+        return 0 if math.isnan(x) and math.isnan(y) else 1 << 62
+    if math.isinf(x) or math.isinf(y) or x == 0 or y == 0:
+        return 0 if (a ^ b) & ((1 << width) - 1) == 0 else 1 << 62
+    order = lambda v: v if v >> (width - 1) == 0 else -(v & ((1 << (width - 1)) - 1))
+    return abs(order(a & ((1 << width) - 1)) - order(b & ((1 << width) - 1)))
+
+
+@requires_runtime
+@pytest.mark.parametrize("op", range(20))
+def test_math_functions_within_an_ulp_of_host(tmp_path, op):
+    """LLVM libc's implementations, through Squall's soft float, against the
+    host's libm: at most an ulp apart, and the same on special values."""
+    source = EXAMPLES / "libm.c"
+    library = host_library(tmp_path, source)
+    images = {entry: link(tmp_path, [source], entry, "-O2", ("-mllvm", "-squall-memory-bytes=2097152"))
+              for entry in ("math_high", "math_low", "mathf_bits")}
+    for index, a in enumerate(MATH_INPUTS):
+        got = {}
+        for entry, image in images.items():
+            load(image, tmp_path / f"{entry}-{index}", [op, a])
+            result = run_image(tmp_path / f"{entry}-{index}")
+            assert result["status"] == 1, (entry, op, a, result)
+            got[entry] = result["result"] & 0xFFFFFFFF
+        want = {entry: host_call(tmp_path, library, entry, (op, a), f"{op}-{index}") & 0xFFFFFFFF
+                for entry in images}
+        double = lambda r: r["math_high"] << 32 | r["math_low"]
+        assert ulps_apart(double(got), double(want), 64) <= 1, (op, a, hex(double(got)), hex(double(want)))
+        assert ulps_apart(got["mathf_bits"], want["mathf_bits"], 32) <= 1, (op, a)
+
+
+@requires_runtime
+def test_frexp_ldexp_modf_match_host(tmp_path):
+    check_against_host(tmp_path, EXAMPLES / "libm.c",
+                       {"split": [(a,) for a in (0, 1, -1, 7, -13, 64, -200, 511, 1700, -2999)]}, "-O2",
+                       ("-mllvm", "-squall-memory-bytes=2097152"))
+
+
+@requires_runtime
+@pytest.mark.parametrize("level", ["-O0", "-O2"])
+@pytest.mark.parametrize("exponent,high", [
+    ("i64 4294967296", 0x7FF00000), ("i64 -4294967296", 0), ("i64 3", 0x40200000),
+    ("i16 -2", 0x3FD00000), ("i32 1024", 0x7FF00000),
+])
+def test_ldexp_exponents_of_every_width(tmp_path, level, exponent, high):
+    """The library's ldexp takes an int; wider exponents clamp, which gives
+    the same saturated result, and narrower ones sign-extend."""
+    width = exponent.split()[0]
+    source = tmp_path / "ldexp.ll"
+    source.write_text(f"""define i32 @main() {{
+  %r = call double @llvm.ldexp.f64.{width}(double 1.0, {exponent})
+  %bits = bitcast double %r to i64
+  %top = lshr i64 %bits, 32
+  %t = trunc i64 %top to i32
+  ret i32 %t
+}}
+declare double @llvm.ldexp.f64.{width}(double, {width})
+""")
+    image = link(tmp_path, [source], "main", level)
+    load(image, tmp_path / "run")
+    result = run_image(tmp_path / "run")
+    assert result["status"] == 1 and result["result"] == i32(high), result
+
+
+@requires_runtime
+@pytest.mark.parametrize("level", ["-O0", "-O2"])
+def test_exit_ends_the_program_with_its_status(tmp_path, level):
+    source = tmp_path / "exit.c"
+    source.write_text("""#include <stdlib.h>
+static int depth(int n, int code) {
+  if (n == 0)
+    exit(code);
+  return depth(n - 1, code) + 1;
+}
+int run(int code) {
+  if (code < 0)
+    _Exit(-code);
+  return depth(5, code * 2) + 100;
+}
+""")
+    image = link(tmp_path, [source], "run", level)
+    for index, (code, result) in enumerate([(21, 42), (-7, 7), (0, 0)]):
+        load(image, tmp_path / f"run{index}", [code])
+        run = run_image(tmp_path / f"run{index}")
+        assert run["quiescent"] and run["status"] == 1 and run["result"] == result, (code, run)
+
+
+@requires_runtime
+def test_stdio_declarations_compile_and_calls_are_diagnosed(tmp_path):
+    """Code that only mentions stdio on unused paths links; a live call
+    names the function and the runtime."""
+    quiet = tmp_path / "quiet.c"
+    quiet.write_text("""#include <stdio.h>
+static void trace(const char *s) { printf("%s\\n", s); }
+int main(void) {
+  if (0)
+    trace("never");
+  return 5;
+}
+""")
+    image = link(tmp_path, [quiet], "main", "-O2")
+    load(image, tmp_path / "quiet")
+    assert run_image(tmp_path / "quiet")["result"] == 5
+    loud = tmp_path / "loud.c"
+    loud.write_text('#include <stdio.h>\nint main(void) { return printf("hi"); }\n')
+    run = subprocess.run([clang(), "--target=squallv2", "-O2", str(loud), "-o", str(tmp_path / "loud.o")],
+                         capture_output=True, text=True)
+    assert run.returncode and "call to 'printf' has no definition in this program or the Squall " \
+        "runtime library" in run.stderr, run.stderr
+
+
+@requires_runtime
+@pytest.mark.parametrize("cells,fits,aligned", [(30000, True, False), (30000, True, True), (70000, False, False)])
+def test_large_programs_move_the_frame_arena(tmp_path, cells, fits, aligned):
+    """Code and globals past a quarter of memory push the frame arena up,
+    past any alignment padding; a program that leaves no room for frames is
+    told the size it needs."""
+    source = tmp_path / "large.c"
+    attribute = "__attribute__((aligned(256))) " if aligned else ""
+    source.write_text(f"""static int table[{cells}] = {{1, 2, 3}};
+{attribute}int last(void) {{ return table[{cells} - 1]; }}
+int main(int i) {{
+  table[i] += 40;
+  return table[i] + last();
+}}
+""")
+    run = subprocess.run([clang(), "--target=squallv2", "-O2", str(source), "-o", str(tmp_path / "large.o")],
+                         capture_output=True, text=True)
+    if not fits:
+        assert run.returncode and "leaving no room for frames in the 512 KiB image; use " \
+            "-squall-memory-bytes=" in run.stderr, run.stderr
+        return
+    assert run.returncode == 0, run.stderr
+    load(tmp_path / "large.o", tmp_path / "large", [2])
+    manifest = json.loads((tmp_path / "large/manifest.json").read_text())
+    assert manifest["root_frame_word"] > manifest["memory_bytes"] // 32  # Past the quarter mark.
+    result = run_image(tmp_path / "large")
+    assert result["status"] == 1 and result["result"] == 43, result
+
+
+@pytest.mark.parametrize("level", ["-O1", "-O2"])
+def test_aligned_loops_run(tmp_path, level):
+    """-falign-loops pads before loop headers that code falls through into.
+    It is a code generation option, so it applies with -c, not at the link."""
+    source = tmp_path / "loops.c"
+    source.write_text("""int data[16];
+int main(int n) {
+  int s = 0;
+  for (int i = 0; i < n; i++) data[i & 15] = i;
+  for (int j = 0; j < n; j++) {
+    int k = data[j & 15];
+    while (k > 0) { s += k; k -= 3; }
+  }
+  return s;
+}
+""")
+    if not clang():
+        pytest.skip("the built Squall Clang is required")
+    image = tmp_path / "loops.o"
+    subprocess.run([clang(), "--target=squallv2", "-c", level, "-falign-loops=256", "-Wno-main",
+                    str(source), "-o", str(image)], check=True, capture_output=True, text=True)
+    load(image, tmp_path / "loops", [10])
+    result = run_image(tmp_path / "loops")
+    assert result["status"] == 1 and result["result"] == 72, result
+
+
+@requires_runtime
+@pytest.mark.parametrize("level", ["-O0", "-O2"])
+def test_aliased_main(tmp_path, level):
+    """An alias of main names the entry function after aliases are resolved."""
+    source = tmp_path / "alias.c"
+    source.write_text('int real_main(void) { return 42; }\n'
+                      'int main(void) __attribute__((alias("real_main")));\n')
+    image = link(tmp_path, [source], "main", level)
+    load(image, tmp_path / "alias")
+    result = run_image(tmp_path / "alias")
+    assert result["status"] == 1 and result["result"] == 42, result
+
+
+@requires_runtime
+@pytest.mark.parametrize("level", ["-O0", "-O2"])
+def test_used_main(tmp_path, level):
+    """`used` puts main in llvm.compiler.used, where the runtime's unused
+    functions are stripped; the entry must stay."""
+    source = tmp_path / "used.c"
+    source.write_text("__attribute__((used)) int main(void) { return 42; }\n")
+    image = link(tmp_path, [source], "main", level)
+    load(image, tmp_path / "used")
+    result = run_image(tmp_path / "used")
+    assert result["status"] == 1 and result["result"] == 42, result
+
+
+@requires_runtime
 @pytest.mark.parametrize("level", ["-O0", "-O2"])
 def test_failed_assertion_traps(tmp_path, level):
     image = link(tmp_path, [EXAMPLES / "libc.c"], "checked", level)
@@ -153,8 +379,8 @@ def test_float_needs_the_linked_runtime(tmp_path):
     run = subprocess.run([clang(), "--target=squallv2", "-c", str(source), "-o", str(tmp_path / "f.o")],
                          capture_output=True, text=True)
     assert run.returncode != 0
-    assert "'__mulsf3' has no definition in this program; the Squall runtime library is linked only " \
-           "when clang links the program, without -c" in run.stderr
+    assert "'__mulsf3' has no definition in this program or the Squall runtime library, which " \
+           "clang adds when it links (not with -c)" in run.stderr
 
 
 # Random operands for every arithmetic operation, conversion, and comparison,

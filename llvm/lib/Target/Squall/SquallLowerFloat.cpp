@@ -193,13 +193,81 @@ Value *SquallLowerFloat::lowerClassTest(IRBuilder<> &B, Value *V,
     else if (Mask & Pos)
       Add(B.CreateAnd(B.CreateNot(Negative), Class));
   };
-  Signed(fcNegInf, fcPosInf, EQ(Inf));
-  Value *Normal = B.CreateICmpUGE(Abs, ConstantInt::get(IT, MinNormal));
-  Signed(fcNegNormal, fcPosNormal, Between(Normal, ULT(Inf)));
-  Value *Nonzero = B.CreateICmpNE(Abs, ConstantInt::get(IT, 0));
-  Signed(fcNegSubnormal, fcPosSubnormal, Between(Nonzero, ULT(MinNormal)));
-  Signed(fcNegZero, fcPosZero, EQ(APInt(Bits, 0)));
+  if (Mask & fcInf)
+    Signed(fcNegInf, fcPosInf, EQ(Inf));
+  if (Mask & fcNormal) {
+    Value *Normal = B.CreateICmpUGE(Abs, ConstantInt::get(IT, MinNormal));
+    Signed(fcNegNormal, fcPosNormal, Between(Normal, ULT(Inf)));
+  }
+  if (Mask & fcSubnormal) {
+    Value *Nonzero = B.CreateICmpNE(Abs, ConstantInt::get(IT, 0));
+    Signed(fcNegSubnormal, fcPosSubnormal, Between(Nonzero, ULT(MinNormal)));
+  }
+  if (Mask & fcZero)
+    Signed(fcNegZero, fcPosZero, EQ(APInt(Bits, 0)));
   return Result;
+}
+
+/// The C library function (double version) that computes an intrinsic, if
+/// any. SelectionDAG would expand these into calls by a libcall table that
+/// Squall does not have, so they are calls in IR.
+static StringRef libraryFunction(Intrinsic::ID ID) {
+  switch (ID) {
+  case Intrinsic::sqrt:
+    return "sqrt";
+  case Intrinsic::floor:
+    return "floor";
+  case Intrinsic::ceil:
+    return "ceil";
+  case Intrinsic::trunc:
+    return "trunc";
+  case Intrinsic::round:
+    return "round";
+  case Intrinsic::rint:
+    return "rint";
+  case Intrinsic::nearbyint:
+    return "nearbyint";
+  case Intrinsic::minnum:
+    return "fmin";
+  case Intrinsic::maxnum:
+    return "fmax";
+  case Intrinsic::sin:
+    return "sin";
+  case Intrinsic::cos:
+    return "cos";
+  case Intrinsic::tan:
+    return "tan";
+  case Intrinsic::asin:
+    return "asin";
+  case Intrinsic::acos:
+    return "acos";
+  case Intrinsic::atan:
+    return "atan";
+  case Intrinsic::atan2:
+    return "atan2";
+  case Intrinsic::sinh:
+    return "sinh";
+  case Intrinsic::cosh:
+    return "cosh";
+  case Intrinsic::tanh:
+    return "tanh";
+  case Intrinsic::exp:
+    return "exp";
+  case Intrinsic::exp2:
+    return "exp2";
+  case Intrinsic::log:
+    return "log";
+  case Intrinsic::log2:
+    return "log2";
+  case Intrinsic::log10:
+    return "log10";
+  case Intrinsic::pow:
+    return "pow";
+  case Intrinsic::fma:
+    return "fma";
+  default:
+    return "";
+  }
 }
 
 bool SquallLowerFloat::lower(Instruction &I) {
@@ -338,32 +406,77 @@ bool SquallLowerFloat::lower(Instruction &I) {
                  {Product, II->getArgOperand(2)});
       break;
     }
-    case Intrinsic::canonicalize:
+    case Intrinsic::canonicalize: {
+      // Arithmetic quiets a signaling NaN; every other value, subnormals
+      // included, is already canonical in IEEE mode.
+      Value *X = II->getArgOperand(0);
+      Value *Signaling = lowerClassTest(B, X, fcSNan);
+      Value *Raw = Bits(X);
+      APInt Quiet =
+          APInt::getOneBitSet(IT->getBitWidth(), T->isFloatTy() ? 22 : 51);
+      Value *Quieted = B.CreateOr(Raw, ConstantInt::get(IT, Quiet));
+      New = B.CreateBitCast(B.CreateSelect(Signaling, Quieted, Raw), T);
+      break;
+    }
     case Intrinsic::arithmetic_fence:
       New = II->getArgOperand(0);
       break;
-    case Intrinsic::sqrt:
-      New = Library("sqrt");
+    case Intrinsic::modf: {
+      // {fraction, integral part}: the fraction is x - trunc(x) with the
+      // sign of x, and zero for infinities; NaN propagates through both.
+      Value *X = II->getArgOperand(0);
+      Value *Whole = call(B, T->isFloatTy() ? "truncf" : "trunc", T, {X});
+      Value *Difference =
+          call(B, ("__sub" + suffix(T) + "3").str(), T, {X, Whole});
+      Value *Infinite = lowerClassTest(B, X, fcInf);
+      Value *Fraction =
+          B.CreateSelect(Infinite, ConstantFP::get(T, 0.0), Difference);
+      Value *Magnitude =
+          B.CreateAnd(Bits(Fraction), ConstantInt::get(IT, ~Sign));
+      Value *SignOf = B.CreateAnd(Bits(X), ConstantInt::get(IT, Sign));
+      Fraction = B.CreateBitCast(B.CreateOr(Magnitude, SignOf), T);
+      Value *Pair = B.CreateInsertValue(PoisonValue::get(Ty), Fraction, 0);
+      New = B.CreateInsertValue(Pair, Whole, 1);
       break;
-    case Intrinsic::floor:
-      New = Library("floor");
+    }
+    case Intrinsic::ldexp: {
+      // The library takes an int exponent. Results saturate long before 2^31
+      // (to infinity or zero), so a clamped exponent gives the same value.
+      Value *E = II->getArgOperand(1);
+      if (E->getType()->getIntegerBitWidth() > 32) {
+        Type *Wide = E->getType();
+        Value *Low = ConstantInt::getSigned(Wide, INT32_MIN);
+        Value *High = ConstantInt::get(Wide, INT32_MAX);
+        Value *TooLow = B.CreateICmpSLT(E, Low);
+        E = B.CreateSelect(TooLow, Low, E);
+        Value *TooHigh = B.CreateICmpSGT(E, High);
+        E = B.CreateSelect(TooHigh, High, E);
+      }
+      E = B.CreateSExtOrTrunc(E, B.getInt32Ty());
+      New = call(B, T->isFloatTy() ? "ldexpf" : "ldexp", T,
+                 {II->getArgOperand(0), E});
       break;
-    case Intrinsic::ceil:
-      New = Library("ceil");
+    }
+    case Intrinsic::frexp: {
+      // {mantissa, exponent}, from the library function and a stack slot.
+      Type *ExpType = cast<StructType>(Ty)->getElementType(1);
+      IRBuilder<> Entry(
+          &*I.getFunction()->getEntryBlock().getFirstInsertionPt());
+      Value *Slot = Entry.CreateAlloca(B.getInt32Ty(), nullptr, "frexp.exp");
+      Value *Mantissa = call(B, T->isFloatTy() ? "frexpf" : "frexp", T,
+                             {II->getArgOperand(0), Slot});
+      Value *Exp =
+          B.CreateSExtOrTrunc(B.CreateLoad(B.getInt32Ty(), Slot), ExpType);
+      Value *Pair = B.CreateInsertValue(PoisonValue::get(Ty), Mantissa, 0);
+      New = B.CreateInsertValue(Pair, Exp, 1);
       break;
-    case Intrinsic::trunc:
-      New = Library("trunc");
-      break;
-    case Intrinsic::round:
-      New = Library("round");
-      break;
-    case Intrinsic::minnum:
-      New = Library("fmin");
-      break;
-    case Intrinsic::maxnum:
-      New = Library("fmax");
-      break;
+    }
     default:
+      if (StringRef Name = libraryFunction(II->getIntrinsicID());
+          !Name.empty()) {
+        New = Library(Name);
+        break;
+      }
       return false; // The IR checker reports the rest.
     }
   } else {
@@ -377,9 +490,13 @@ bool SquallLowerFloat::lower(Instruction &I) {
 
 // Runtime functions that LTO kept for code generation, and that nothing
 // calls now, would only take space in the image; so would the internal
-// helpers and variables that only they used.
+// helpers and variables that only they used. The entry function is never
+// called from the image, and may itself be marked used.
 bool SquallLowerFloat::stripUnusedRuntime() {
   bool Changed = false;
+  auto IsEntry = [](const Function &F) {
+    return F.getName() == Squall::entryName();
+  };
   for (bool Progress = true; Progress;) {
     Progress = false;
     SmallVector<GlobalValue *, 32> Kept;
@@ -387,7 +504,7 @@ bool SquallLowerFloat::stripUnusedRuntime() {
     SmallPtrSet<Constant *, 32> Unused;
     for (GlobalValue *GV : Kept)
       if (auto *F = dyn_cast<Function>(GV);
-          F && !F->isDeclaration() && F->hasOneUse())
+          F && !F->isDeclaration() && F->hasOneUse() && !IsEntry(*F))
         Unused.insert(F); // Only llvm.compiler.used refers to it.
     if (!Unused.empty())
       removeFromUsedLists(*M, [&](Constant *C) {
@@ -395,7 +512,7 @@ bool SquallLowerFloat::stripUnusedRuntime() {
       });
     for (Function &F : make_early_inc_range(*M)) {
       F.removeDeadConstantUsers();
-      if (F.use_empty() && !F.isDeclaration() &&
+      if (F.use_empty() && !F.isDeclaration() && !IsEntry(F) &&
           (F.hasLocalLinkage() || Unused.contains(&F))) {
         F.eraseFromParent();
         Progress = Changed = true;
@@ -424,13 +541,20 @@ bool SquallLowerFloat::runOnModule(Module &Mod) {
       Changed |= lower(*I);
   }
   // compiler-rt defines some builtins as aliases (__eqsf2 of __lesf2, for
-  // example), which the calls above may name. A Squall image has no symbols,
-  // so calls go to the aliasee.
-  for (GlobalAlias &A : make_early_inc_range(Mod.aliases()))
-    if (auto *F = dyn_cast<Function>(A.getAliasee()->stripPointerCasts())) {
-      A.replaceAllUsesWith(F);
-      A.eraseFromParent();
-      Changed = true;
+  // example), which the calls above may name, and C programs may alias
+  // variables. A Squall image has no symbols, so every use refers to the
+  // aliasee: a function, or a variable plus a constant offset. The entry
+  // function is found by name, so an alias that names it gives its name and
+  // export to the function it aliases, through any chain of aliases.
+  for (GlobalAlias &A : make_early_inc_range(Mod.aliases())) {
+    if (auto *F = dyn_cast_or_null<Function>(A.getAliaseeObject());
+        F && A.getName() == Squall::entryName()) {
+      F->takeName(&A);
+      F->setLinkage(GlobalValue::ExternalLinkage);
     }
+    A.replaceAllUsesWith(A.getAliasee());
+    A.eraseFromParent();
+    Changed = true;
+  }
   return stripUnusedRuntime() | Changed;
 }

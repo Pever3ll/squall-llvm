@@ -9,6 +9,7 @@
 #ifndef LLVM_LIB_TARGET_SQUALL_SQUALL_H
 #define LLVM_LIB_TARGET_SQUALL_SQUALL_H
 
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CodeGen.h"
 
 namespace llvm {
@@ -48,8 +49,16 @@ enum FrameWord : unsigned {
 /// The number of argument registers; argument I arrives in S<I>.
 constexpr unsigned NumArgRegs = 16;
 
-/// Frame-relative and absolute slot fields are unsigned 11-bit word numbers.
+/// The highest frame-relative or absolute word the backend names with a slot
+/// field. The field is 12 bits (0-4095); the backend uses half of that reach,
+/// which bounds a frame at about 8 KiB of locals and keeps the room reserved
+/// past each frame (and so lost to call depth) at 2048 words.
 constexpr unsigned MaxSlotWord = 2047;
+
+/// The Isacomp squall-v2-rebase commit whose RTL this backend's encoding, tag
+/// layout and slot semantics match. Recorded in every image's manifest;
+/// squall_tools/rtl.py pins the same commit.
+constexpr const char IsaCommit[] = "a21ccd67752c7b8bd9523818aa77b972f13ddb16";
 
 /// With -squall-fork-join, a lane that calls a function joins on its own
 /// absolute word, one of this many reserved before the globals; other lanes
@@ -58,6 +67,12 @@ constexpr unsigned MaxSlotWord = 2047;
 constexpr unsigned NumCallJoinWords = 32;
 /// Whether -squall-fork-join is given.
 bool isForkJoinEnabled();
+/// The function started by the image's start token (-squall-entry).
+StringRef entryName();
+
+/// A call to this function, `void __squall_exit(int)`, ends the program with
+/// its argument as the result (the C library's exit and _Exit).
+constexpr const char ExitFunction[] = "__squall_exit";
 } // namespace Squall
 } // namespace llvm
 

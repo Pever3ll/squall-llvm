@@ -44,10 +44,14 @@ def ALUS : SQ<(ins SQImm:$alu, SQImm:$dest, SQImm:$port, SQImm:$second,
                    SQImm:$slot, SQImm:$mode, SQImm:$rule)>;
 def SEND : SQ<(ins SQImm:$dest, SQImm:$port, SQImm:$slot, SQImm:$mode,
                    SQImm:$rule)>;
+// Extract is monadic: it mints a tag for $target in the token's frame and
+// matches no slot.
 def EXTRACT : SQ<(ins SQImm:$dest, SQImm:$port, SQImm:$target,
-                      SQImm:$targetport, SQImm:$slot, SQImm:$mode,
-                      SQImm:$rule)>;
-def WRITE : SQ<(ins SQImm:$address)>;
+                      SQImm:$targetport)>;
+// $mask selects the bytes stored; with $ack set, the stored value is also
+// sent on to $dest.
+def WRITE : SQ<(ins SQImm:$address, SQImm:$mask, SQImm:$dest, SQImm:$port,
+                    SQImm:$ack)>;
 
 //===----------------------------------------------------------------------===//
 // Target DAG nodes
@@ -69,6 +73,8 @@ def SquallCallR : SDNode<"SquallISD::CALLR", SDT_SquallCallR,
                          [SDNPHasChain, SDNPVariadic, SDNPSideEffect,
                           SDNPMayLoad, SDNPMayStore]>;
 def SquallRetVoid : SDNode<"SquallISD::RET_VOID", SDTNone, [SDNPHasChain]>;
+// exit(): end the program with the value as its result.
+def SquallExit : SDNode<"SquallISD::EXIT", SDT_SquallRet, [SDNPHasChain]>;
 def SquallRet : SDNode<"SquallISD::RET", SDT_SquallRet, [SDNPHasChain]>;
 // A global's address; its word is fixed by the image layout.
 def SquallWrapper : SDNode<"SquallISD::WRAPPER", SDT_SquallWrapper>;
@@ -205,6 +211,9 @@ let isCall = 1, hasSideEffects = 1, mayLoad = 1, mayStore = 1 in {
 // Halts the program with the trap status (__builtin_trap, abort, assert).
 let hasSideEffects = 1 in
 def TRAP : SquallPseudo<(outs), (ins), [(trap)]>;
+// Ends the program as if the entry function returned the value (exit).
+let hasSideEffects = 1 in
+def EXIT : SquallPseudo<(outs), (ins GPR:$v), [(SquallExit GPR:$v)]>;
 
 let isReturn = 1, isTerminator = 1, isBarrier = 1 in {
   def RET : SquallPseudo<(outs), (ins), [(SquallRetVoid)]>;

@@ -10,7 +10,10 @@
 namespace llvm {
 class MCContext;
 namespace Squall {
-enum Fixups { Dest20 = FirstTargetFixupKind, Target20, Code11 };
+enum Fixups { Dest20 = FirstTargetFixupKind, Target20, Code12 };
+/// Alignment padding: `write 0 0x00`, a Write that stores no byte and
+/// acknowledges nothing, so a token reaching it is discarded.
+constexpr uint64_t PaddingWord = 2;
 const char *aluName(unsigned Op);
 int aluCode(StringRef Name);
 // Resolves instruction fields and reports malformed MCInsts without truncation.

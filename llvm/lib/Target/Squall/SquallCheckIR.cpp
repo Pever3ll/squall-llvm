@@ -25,6 +25,7 @@
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
 
@@ -94,8 +95,8 @@ class SquallCheckIR : public ModulePass {
   /// only when clang links it; a single `clang -c` module has neither.
   static std::string undefined(StringRef Name) {
     return ("'" + Name +
-            "' has no definition in this program; the Squall runtime library "
-            "is linked only when clang links the program, without -c")
+            "' has no definition in this program or the Squall runtime "
+            "library, which clang adds when it links (not with -c)")
         .str();
   }
 
@@ -106,8 +107,9 @@ class SquallCheckIR : public ModulePass {
            "Squall memory accesses must be integers, pointers, float, or "
            "double",
            I.getDebugLoc());
-    // Volatile accesses need no special treatment: expanded code runs with a
-    // single control token, in program order.
+    // Volatile accesses are kept in program order by code generation: the
+    // AsmPrinter never forwards a volatile load, and fork/join never splits
+    // ordered accesses into separate lanes.
     if (Atomic)
       fail(F, "atomic accesses are not supported on Squall", I.getDebugLoc());
   }
@@ -126,7 +128,15 @@ class SquallCheckIR : public ModulePass {
               "pointers, float, or double");
     for (const Instruction &I : instructions(F)) {
       const DebugLoc &Loc = I.getDebugLoc();
-      if (!I.getType()->isVoidTy() && !isValueType(I.getType()))
+      // Structs of scalars, such as the {value, flag} pairs of
+      // uadd.with.overflow, are split by instruction selection wherever they
+      // flow (freeze, phi, select); memory, arguments, and returns are
+      // checked separately.
+      const auto *Pair = dyn_cast<StructType>(I.getType());
+      bool ScalarStruct =
+          Pair && !Pair->isOpaque() && all_of(Pair->elements(), isValueType);
+      if (!I.getType()->isVoidTy() && !isValueType(I.getType()) &&
+          !ScalarStruct)
         fail(F,
              Twine("unsupported value type in '") + I.getOpcodeName() +
                  "'; Squall supports integers of at most 64 bits, float, "
@@ -138,7 +148,10 @@ class SquallCheckIR : public ModulePass {
       } else if (const auto *S = dyn_cast<StoreInst>(&I)) {
         checkMemoryAccess(F, I, S->getValueOperand()->getType(), S->isAtomic());
       } else if (const auto *A = dyn_cast<AllocaInst>(&I)) {
-        if (!A->isStaticAlloca())
+        // SquallLowerAlloca leaves these for this check: no fixed size.
+        if (A->getAllocatedType()->isScalableTy())
+          fail(F, "scalable vectors are not supported on Squall", Loc);
+        else if (!A->isStaticAlloca())
           fail(F,
                "dynamic or non-entry-block allocas are not supported on "
                "Squall",
@@ -159,12 +172,48 @@ class SquallCheckIR : public ModulePass {
         fail(F, Twine("'") + I.getOpcodeName() + "' is not supported on Squall",
              Loc);
       } else if (const auto *Call = dyn_cast<CallInst>(&I)) {
+        if (Call->isMustTailCall())
+          fail(F, "musttail calls are not supported on Squall", Loc);
+        // A return is a send to a continuation tag held in the frame, and
+        // frames have no pointer register: there is no address to report.
+        if (const auto *II = dyn_cast<IntrinsicInst>(Call)) {
+          switch (II->getIntrinsicID()) {
+          case Intrinsic::returnaddress:
+          case Intrinsic::addressofreturnaddress:
+          case Intrinsic::frameaddress:
+          case Intrinsic::sponentry:
+            fail(F,
+                 Twine("'") + II->getCalledFunction()->getName() +
+                     "' is not supported on Squall",
+                 Loc);
+            continue;
+          default:
+            break;
+          }
+        }
+        // SquallLowerFloat has rewritten the floating-point intrinsics it
+        // supports; SelectionDAG could only turn the rest into library
+        // calls that Squall has no table for.
+        if (const auto *II = dyn_cast<IntrinsicInst>(Call);
+            II && !isa<DbgInfoIntrinsic>(II) &&
+            (II->getType()->isFPOrFPVectorTy() ||
+             any_of(II->args(), [](const Value *A) {
+               return A->getType()->isFPOrFPVectorTy();
+             }))) {
+          fail(F,
+               Twine("floating-point intrinsic '") +
+                   II->getCalledFunction()->getName() +
+                   "' is not supported on Squall",
+               Loc);
+          continue;
+        }
         if (Call->isInlineAsm()) {
           fail(F, "inline assembly is not supported on Squall", Loc);
           continue;
         }
         const Function *Callee = Call->getCalledFunction();
-        if (Callee && !Callee->isIntrinsic() && Callee->isDeclaration())
+        if (Callee && !Callee->isIntrinsic() && Callee->isDeclaration() &&
+            Callee->getName() != Squall::ExitFunction)
           fail(F, "call to " + undefined(Callee->getName()), Loc);
       }
       // A function pointer is its target's entry word, so the target must be

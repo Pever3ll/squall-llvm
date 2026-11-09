@@ -11,6 +11,7 @@
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/EndianStream.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/MathExtras.h"
 using namespace llvm;
 #define GET_INSTRINFO_MC_DESC
@@ -20,11 +21,13 @@ using namespace llvm;
 #define GET_SUBTARGETINFO_MC_DESC
 #include "SquallGenSubtargetInfo.inc"
 namespace {
-const char *Names[35] = {
+constexpr unsigned NumAluOps = 37;
+const char *Names[NumAluOps] = {
     "nop",  nullptr, nullptr, nullptr, "add",   "sub",   "mul",   "div", "divu",
     "rem",  "mod",   nullptr, nullptr, nullptr, nullptr, nullptr, "and", "or",
     "xor",  "shl",   "shrl",  "shra",  nullptr, nullptr, "not",   "rev", "dupl",
-    "dupr", nullptr, nullptr, nullptr, nullptr, "beqz",  "beql",  "beqr"};
+    "dupr", nullptr, nullptr, nullptr, nullptr, "beqz",  "beql",  "beqr",
+    "bler", "blel"};
 class SquallAsmInfo : public MCAsmInfoELF {
 public:
   SquallAsmInfo(const MCTargetOptions &O) : MCAsmInfoELF(O) {
@@ -85,13 +88,30 @@ public:
     unsigned K = I->getOpcode();
     O << '\t' << getMnemonic(*I).first;
     if (K == Squall::WRITE) {
+      // write[.a ack-dest] slot [byte-mask]
+      bool Ack = I->getOperand(4).getImm();
+      if (Ack) {
+        O << ".a ";
+        dest(I, 2, O);
+      }
       O << ' ';
       operand(I->getOperand(0), O);
+      int64_t Mask = I->getOperand(1).getImm();
+      if (Mask != 0xff)
+        O << ' ' << format_hex(uint64_t(Mask) & 0xff, 4);
+      printAnnotation(O, A);
+      return;
+    }
+    if (K == Squall::EXTRACT) {
+      O << ' ';
+      dest(I, 0, O);
+      O << ' ';
+      dest(I, 2, O);
       printAnnotation(O, A);
       return;
     }
     unsigned D = K == Squall::ALUI || K == Squall::ALUS ? 1 : 0;
-    unsigned S = K == Squall::ALUS || K == Squall::EXTRACT ? 4 : 2;
+    unsigned S = K == Squall::ALUS ? 4 : 2;
     if (K != Squall::ALUI) {
       int Rule = I->getOperand(S + 2).getImm();
       if (Rule)
@@ -102,10 +122,6 @@ public:
     if (D && I->getOperand(3).getImm() >= 0)
       O << (I->getOperand(3).getImm() ? ".r" : ".l");
     O << ' ';
-    if (K == Squall::EXTRACT) {
-      dest(I, 2, O);
-      O << ' ';
-    }
     if (K == Squall::ALUI) {
       O << '#';
       operand(I->getOperand(4), O);
@@ -126,14 +142,27 @@ public:
 };
 } // namespace
 const char *llvm::Squall::aluName(unsigned Op) {
-  return Op < 35 ? Names[Op] : nullptr;
+  return Op < NumAluOps ? Names[Op] : nullptr;
 }
 int llvm::Squall::aluCode(StringRef N) {
-  for (int I = 0; I < 35; ++I)
+  for (unsigned I = 0; I < NumAluOps; ++I)
     if (Names[I] && N == Names[I])
       return I;
   return -1;
 }
+// Field layout of the Squall v2 ISA as implemented by Isacomp's
+// squall-v2-rebase RTL (isa/squall/{fetch,dest,slot,alu_operands}.isa and
+// instr/{send,extract,write}.isa):
+//
+//   all       [1:0] form: 0 monadic, 1 dyadic, 2 write
+//             [62:43] signed destination offset, [63] destination port
+//   monadic   [7:2] alu op, [8] second token, [9] its port, [41:10] literal,
+//             [42] forming rule: 0 Arith, 1 Extract
+//   extract   [29:10] signed second-destination offset, [30] its port
+//   dyadic    [7:2] alu op, [8] second token, [9] its port (Arith only),
+//             [37:26] slot, [39:38] mode, [41:40] matching rule,
+//             [42] forming rule: 0 Arith, 1 Send
+//   write     [30:2] word, [38:31] byte mask, [39] acknowledge
 uint64_t llvm::Squall::encode(const MCInst &I, SmallVectorImpl<MCFixup> &F,
                               MCContext &C) {
   auto field = [&](unsigned N, unsigned Bits, bool Signed, unsigned Shift,
@@ -152,13 +181,22 @@ uint64_t llvm::Squall::encode(const MCInst &I, SmallVectorImpl<MCFixup> &F,
       C.reportError(I.getLoc(), "Squall instruction field out of range");
     return (uint64_t(X) & ((UINT64_C(1) << Bits) - 1)) << Shift;
   };
+  auto destination = [&](unsigned N) {
+    return field(N, 20, true, 43, Dest20) | field(N + 1, 1, false, 63);
+  };
   unsigned K = I.getOpcode();
-  if (K == WRITE)
-    return 2 | field(0, 29, false, 2);
-  bool Alu = K == ALUI || K == ALUS;
-  unsigned D = Alu ? 1 : 0, S = K == ALUS || K == EXTRACT ? 4 : 2;
-  uint64_t W = field(D, 20, true, 43, Dest20) | field(D + 1, 1, false, 63);
-  if (Alu) {
+  if (K == WRITE) {
+    uint64_t W = 2 | field(0, 29, false, 2) | field(1, 8, false, 31) |
+                 field(4, 1, false, 39);
+    if (I.getOperand(4).isImm() && I.getOperand(4).getImm())
+      W |= destination(2);
+    return W;
+  }
+  uint64_t W = destination(K == ALUI || K == ALUS ? 1 : 0);
+  if (K == EXTRACT)
+    return W | UINT64_C(1) << 42 | field(2, 20, true, 10, Target20) |
+           field(3, 1, false, 30);
+  if (K == ALUI || K == ALUS) {
     if (!aluName(I.getOperand(0).getImm()))
       C.reportError(I.getLoc(), "unknown Squall ALU opcode");
     W |= field(0, 6, false, 2);
@@ -167,17 +205,15 @@ uint64_t llvm::Squall::encode(const MCInst &I, SmallVectorImpl<MCFixup> &F,
   }
   if (K == ALUI)
     return W | field(4, 32, true, 10);
+  unsigned S = K == ALUS ? 4 : 2;
   int64_t Mode = I.getOperand(S + 1).getImm(),
           Rule = I.getOperand(S + 2).getImm();
   if (Mode > 2 || Rule > 2)
     C.reportError(I.getLoc(), "reserved addressing mode or matching rule");
-  W |= 1 | field(S, 11, Mode == 1, 28, Mode == 1 ? Code11 : -1) |
-       field(S + 1, 2, false, 39) | field(S + 2, 2, false, 41);
+  W |= 1 | field(S, 12, Mode == 1, 26, Mode == 1 ? Code12 : -1) |
+       field(S + 1, 2, false, 38) | field(S + 2, 2, false, 40);
   if (K == SEND)
-    W |= UINT64_C(3) << 26;
-  if (K == EXTRACT)
-    W |= UINT64_C(2) << 26 | field(2, 20, true, 2, Target20) |
-         field(3, 1, false, 22);
+    W |= UINT64_C(1) << 42;
   return W;
 }
 extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void

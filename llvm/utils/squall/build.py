@@ -67,7 +67,8 @@ def restore():
                       "tag": "llvmorg-23.1.2", "commit": UPSTREAM}
         if needs_libc:
             (ROOT / "libc/UPSTREAM-SOURCE.json").write_text(json.dumps(dict(provenance,
-                reason="Restore omitted libc source required by LLVMSupport/APFloat.cpp",
+                reason="Restore omitted libc source required by LLVMSupport/APFloat.cpp "
+                       "and the Squall runtime's math library",
                 files=counts["libc"]), indent=2) + "\n")
         if needs_tests:
             (ROOT / "llvm/test/UPSTREAM-SOURCE.json").write_text(json.dumps(dict(provenance,
@@ -128,14 +129,20 @@ def build_runtime(build):
                             "-o", "-"], input="", check=True, capture_output=True, text=True).stdout
     target_lines = "".join(line + "\n" for line in empty.splitlines() if line.startswith("target "))
     builtins_dir = ROOT / "compiler-rt/lib/builtins"
-    libraries = {"libc.bc": [(source, []) for source in sorted((RUNTIME / "src").glob("*.c"))],
+    # The inexact math functions come from LLVM libc's header-only
+    # implementations, which are C++ (see runtime/src/libm.cpp).
+    libm = ["-x", "c++", "-std=c++17", "-fno-exceptions", "-fno-rtti", "-DLIBC_FULL_BUILD",
+            "-DLIBC_NAMESPACE=__llvm_libc_squall", "-I", ROOT / "libc", "-I", ROOT / "libc/include"]
+    libraries = {"libc.bc": [(source, []) for source in sorted((RUNTIME / "src").glob("*.c"))] +
+                            [(RUNTIME / "src/libm.cpp", libm)],
                  "libclang_rt.builtins.bc": [(builtins_dir / f"{name}.c", ["-Wno-error"])
                                              for name in BUILTINS]}
     for library, sources in libraries.items():
         bitcode = []
         for source, extra in sources:
             if not source.exists():
-                raise RuntimeError(f"missing runtime source {source}; check out compiler-rt/lib/builtins")
+                raise RuntimeError(f"missing runtime source {source}; check out compiler-rt/lib/builtins "
+                                   "and restore libc")
             target = objects / f"{source.stem}.bc"
             run([binary / "clang", *flags, *extra, source, "-o", target])
             bitcode.append(target)

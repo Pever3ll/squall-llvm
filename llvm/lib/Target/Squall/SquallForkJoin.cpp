@@ -152,6 +152,10 @@ bool SquallForkJoin::isLaneCall(const MachineInstr &MI) {
 bool SquallForkJoin::isBoundary(const MachineInstr &MI) {
   if (MI.isCall())
     return !isLaneCall(MI);
+  // Volatile accesses must retain their order even for disjoint objects.
+  // Alias analysis alone cannot establish independence for these accesses.
+  if (MI.hasOrderedMemoryRef())
+    return true;
   return MI.isTerminator() || MI.isDebugOrPseudoInstr() ||
          MI.isMetaInstruction() || MI.hasUnmodeledSideEffects();
 }
