@@ -2,7 +2,8 @@
 
 Programs are linked rather than compiled with -c, so the driver adds the
 runtime bitcode; each is compared with the same source built for the host
-against the host's C library and floating-point hardware."""
+against the host's C library and floating-point hardware, except cbrt,
+which is checked against the exact cube root."""
 import ctypes
 import json
 import random
@@ -162,13 +163,59 @@ def ulps_apart(a, b, width):
     return abs(order(a & ((1 << width) - 1)) - order(b & ((1 << width) - 1)))
 
 
+def assert_cbrt_within_one_ulp(bits, a, width):
+    """Bracket cbrt(a / 64) with IEEE values using exact rational cubes."""
+    from fractions import Fraction
+    import struct
+    fraction_bits = 52 if width == 64 else 23
+    sign = 1 << (width - 1)
+    infinity = ((1 << (width - fraction_bits - 1)) - 1) << fraction_bits
+    # libm.c maps 1000..1003 to infinity, -infinity, NaN, and -0.0.
+    special = {0: 0, 1000: infinity, 1001: sign | infinity,
+               1002: infinity | 1, 1003: sign}
+    if a in special:
+        assert ulps_apart(bits, special[a], width) == 0, (13, a, hex(bits), hex(special[a]))
+        return
+    fmt, ints = ("<d", "<Q") if width == 64 else ("<f", "<I")
+
+    def cube(encoding):
+        return Fraction(struct.unpack(fmt, struct.pack(ints, encoding))[0]) ** 3
+
+    target = Fraction(abs(a), 64)
+    lower, upper = 0, infinity
+    while upper - lower > 1:
+        middle = (lower + upper) // 2
+        if cube(middle) <= target:
+            lower = middle
+        else:
+            upper = middle
+    # An exactly representable root also permits either immediate neighbor.
+    if cube(lower) == target:
+        lower, upper = lower - 1, lower + 1
+    if a < 0:
+        lower, upper = lower | sign, upper | sign
+    assert lower <= bits <= upper, (13, a, hex(bits), (hex(lower), hex(upper)))
+
+
+def test_cbrt_exact_oracle():
+    assert_cbrt_within_one_ulp(0xBFE2CF888F8DB02F, -13, 64)
+    with pytest.raises(AssertionError):
+        assert_cbrt_within_one_ulp(0xBFE2CF888F8DB02D, -13, 64)
+    for width, one in ((32, 0x3F800000), (64, 0x3FF0000000000000)):
+        for bits in (one - 1, one, one + 1):
+            assert_cbrt_within_one_ulp(bits, 64, width)
+        with pytest.raises(AssertionError):
+            assert_cbrt_within_one_ulp(one - 2, 64, width)
+
+
 @requires_runtime
 @pytest.mark.parametrize("op", range(20))
 def test_math_functions_within_an_ulp_of_host(tmp_path, op):
     """LLVM libc's implementations, through Squall's soft float, against the
-    host's libm: at most an ulp apart, and the same on special values."""
+    exact cube root for cbrt and the host's libm otherwise: at most an ulp
+    apart, and the same on special values."""
     source = EXAMPLES / "libm.c"
-    library = host_library(tmp_path, source)
+    library = host_library(tmp_path, source) if op != 13 else None
     images = {entry: link(tmp_path, [source], entry, "-O2", ("-mllvm", "-squall-memory-bytes=2097152"))
               for entry in ("math_high", "math_low", "mathf_bits")}
     for index, a in enumerate(MATH_INPUTS):
@@ -178,11 +225,17 @@ def test_math_functions_within_an_ulp_of_host(tmp_path, op):
             result = run_image(tmp_path / f"{entry}-{index}")
             assert result["status"] == 1, (entry, op, a, result)
             got[entry] = result["result"] & 0xFFFFFFFF
-        want = {entry: host_call(tmp_path, library, entry, (op, a), f"{op}-{index}") & 0xFFFFFFFF
-                for entry in images}
         double = lambda r: r["math_high"] << 32 | r["math_low"]
-        assert ulps_apart(double(got), double(want), 64) <= 1, (op, a, hex(double(got)), hex(double(want)))
-        assert ulps_apart(got["mathf_bits"], want["mathf_bits"], 32) <= 1, (op, a)
+        if op == 13:
+            # Some host libms are several ulps off for cbrt.
+            assert_cbrt_within_one_ulp(double(got), a, 64)
+            assert_cbrt_within_one_ulp(got["mathf_bits"], a, 32)
+        else:
+            want = {entry: host_call(tmp_path, library, entry, (op, a), f"{op}-{index}") & 0xFFFFFFFF
+                    for entry in images}
+            assert ulps_apart(double(got), double(want), 64) <= 1, (op, a, hex(double(got)), hex(double(want)))
+            assert ulps_apart(got["mathf_bits"], want["mathf_bits"], 32) <= 1, (
+                op, a, hex(got["mathf_bits"]), hex(want["mathf_bits"]))
 
 
 @requires_runtime
